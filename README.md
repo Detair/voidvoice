@@ -10,27 +10,33 @@
 It uses a **Hybrid Engine**:
 1.  **RNN Denoising (RNNoise):** Removes steady background noise (fans, hum, traffic).
 2.  **Smart Noise Gate:** Actively silences transient clicks (keyboards, shifters) when you aren't speaking.
-
-## 🗺️ Roadmap
-- [x] Cross-platform support (Linux, Windows, macOS)
-- [x] Hybrid AI + Gate Engine
-- [ ] Auto-updater
-- [x] Tray icon support
-- [ ] Dynamic threshold calibration
+3.  **Echo Cancellation (AEC):** Removes speaker feedback for headphone-free gaming.
 
 ## 🚀 Features
 
-- **Hybrid Engine**: Best of both worlds for gamers.
-- **Visual Meter**: See exactly when your mic is active vs gated.
+- **Hybrid Engine**: RNNoise + Smart Gate + AEC.
+- **Echo Cancellation**: Play without headphones using WebRTC AEC3.
+- **Output Filtering**: Denoise incoming audio (like Discord calls) before it hits your speakers.
+- **Daemon Mode**: Run as a background process (`voidmic load`) without the GUI.
+- **Auto Virtual Sink**: Automatically creates virtual devices on Linux.
+- **Visual Meter**: Real-time feedback on gate status.
 - **Cross-Platform**: Linux, Windows, macOS.
-- **Zero Config**: No model downloads required (Embeds weights).
+
+## 🗺️ Roadmap
+- [x] Cross-platform support
+- [x] Hybrid AI + Gate Engine
+- [x] Auto-updater
+- [x] Tray icon support
+- [x] Echo Cancellation
+- [x] Headless / Daemon mode
+- [x] Flatpak support
 
 ## 📥 Build & Install
 
 ### 🐧 Arch Linux / Standard Linux
 ```bash
-# Install dependencies (ALSA)
-sudo pacman -S alsa-lib
+# Install dependencies (ALSA, PulseAudio/PipeWire)
+sudo pacman -S alsa-lib pulseaudio
 
 # Build
 cargo build --release
@@ -39,42 +45,47 @@ cargo build --release
 ./target/release/voidmic
 ```
 
-### ⚛️ Fedora Atomic (Silverblue / Kinoite)
-You can build VoidMic as a Flatpak to keep your system clean.
+### 📦 Flatpak
 ```bash
 # 1. Install Flatpak Builder
 flatpak install org.freedesktop.Sdk.Extension.rust-stable//23.08
 
-# 2. Build and Install (Allowing network for cargo crates)
+# 2. Build and Install
 flatpak-builder --user --install --force-clean --share=network build-dir build-aux/com.voidmic.VoidMic.yml
 
 # 3. Run
 flatpak run com.voidmic.VoidMic
 ```
 
+### 🖥️ Headless / Server
+For minimal systems:
+```bash
+cargo build --release --no-default-features
+./target/release/voidmic run -i default
+```
+
 ### 🪟 Windows
-1.  **Prerequisites**:
-    *   Install **Rust** (rustup-init.exe).
-    *   Install **Visual Studio Build Tools** (C++ Workload) for the linker.
-2.  **Build**:
-    Open PowerShell in the project folder:
-    ```powershell
-cargo build --release
-    ```
-3.  **Run**:
-    ```powershell
-    .\target\release\voidmic.exe
-    ```
-    *Note: On Windows, use the "Install Virtual Cable" button in the app to download VB-Cable drivers if you haven't already.*
+1.  Install **Rust**.
+2.  Install **BSVC** (C++ Build Tools).
+3.  `cargo build --release`
+4.  Run `.\target\release\voidmic.exe`
 
 ## 🎮 Usage Guide
 
-1.  **Select Devices**:
-    *   **Input**: Your Mic.
-    *   **Output**: The Virtual Sink / VB-Cable.
-2.  **Check the Meter**:
-    *   **Green Bar**: You are speaking (Gate Open).
-    *   **Gray Bar**: You are silent (Gate Closed - Clicks are muted).
+### GUI
+1.  **Select Devices**: Mic as Input, Virtual Sink as Output.
+2.  **Advanced Features**:
+    *   **Filter Output**: Check this to denoise what you hear.
+    *   **Echo Cancellation**: Check this if using speakers. Select your "Speaker Monitor" as the reference.
+
+### Daemon (NoiseTorch-like)
+```bash
+# Load: Create virtual sink and start background process
+voidmic load -i default
+
+# Unload: Stop and cleanup
+voidmic unload
+```
 
 ## 🧠 AI Transparency
 Architected with **Google Gemini** and **Antigravity AI**.
