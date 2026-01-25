@@ -5,18 +5,22 @@ First off, thank you for considering contributing to VoidMic! It's people like y
 ## How Can I Help?
 
 ### Reporting Bugs
-- Use the GitHub Issue Tracker.
+- Use the [Bug Report Template](https://github.com/Detair/voidvoice/issues/new?template=bug_report.md).
 - Describe the bug and provide steps to reproduce it.
 - Include your Linux distribution and audio setup (PipeWire/PulseAudio).
 
 ### Suggesting Enhancements
-- Open an issue with the "enhancement" label.
+- Open a [Feature Request](https://github.com/Detair/voidvoice/issues/new?template=feature_request.md).
 - Explain why this feature would be useful for gaming or general noise reduction.
 
 ### Pull Requests
-- Fork the repo and create your branch from `main`.
+- Fork the repo and create your branch from `master`.
 - Ensure your code follows idiomatic Rust patterns.
-- Run `cargo fmt` before committing.
+- Run `cargo fmt` and `cargo clippy` before committing.
+- Open a PR and fill out the checklist in the template.
+
+## Code of Conduct
+Please note that this project is released with a [Contributor Code of Conduct](CODE_OF_CONDUCT.md). By participating in this project you agree to abide by its terms.
 
 ## AI Disclosure
 
