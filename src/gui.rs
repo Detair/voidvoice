@@ -10,6 +10,7 @@ use tray_icon::Icon;
 use crate::autostart;
 use crate::updater::{self, UpdateInfo};
 use crate::virtual_device;
+use crate::pulse_info;
 
 /// Runs the VoidMic GUI application.
 /// 
@@ -58,6 +59,8 @@ struct VoidMicApp {
     update_receiver: Option<std::sync::mpsc::Receiver<Option<UpdateInfo>>>,
     update_info: Option<UpdateInfo>,
     virtual_sink_module_id: Option<u32>,
+    connected_apps: Vec<String>,
+    last_app_refresh: std::time::Instant,
 }
 
 const QUIT_ID: &str = "quit";
@@ -113,6 +116,8 @@ impl VoidMicApp {
             update_receiver,
             update_info: None,
             virtual_sink_module_id: None,
+            connected_apps: Vec::new(),
+            last_app_refresh: std::time::Instant::now(),
         }
     }
 
@@ -320,6 +325,28 @@ impl eframe::App for VoidMicApp {
                 }
             }
 
+            // Connected Apps display (refresh every 2 seconds)
+            #[cfg(target_os = "linux")]
+            {
+                if self.engine.is_some() && self.last_app_refresh.elapsed().as_secs() >= 2 {
+                    self.connected_apps = pulse_info::get_connected_apps()
+                        .into_iter()
+                        .map(|a| a.name)
+                        .collect();
+                    self.last_app_refresh = std::time::Instant::now();
+                }
+                
+                if !self.connected_apps.is_empty() {
+                    ui.add_space(10.0);
+                    egui::CollapsingHeader::new(format!("📱 Connected Apps ({})", self.connected_apps.len()))
+                        .default_open(true)
+                        .show(ui, |ui| {
+                            for app in &self.connected_apps {
+                                ui.label(format!("  • {}", app));
+                            }
+                        });
+                }
+            }
 
             let is_running = self.engine.is_some();
             let btn_text = if is_running { "STOP ENGINE" } else { "ACTIVATE VOIDMIC" };

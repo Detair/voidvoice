@@ -12,6 +12,7 @@ mod config;
 mod autostart;
 mod updater;
 mod virtual_device;
+mod pulse_info;
 
 #[derive(Parser)]
 #[command(name = "voidmic")]
@@ -23,14 +24,24 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// List available audio devices
     List,
+    /// Run VoidMic in foreground (press Ctrl+C to stop)
     Run {
         #[arg(short, long, default_value = "default")]
         input: String,
         #[arg(short, long, default_value = "default")]
         output: String,
     },
+    /// Load VoidMic: create virtual sink and start processing (daemonize)
+    Load {
+        #[arg(short, long, default_value = "default")]
+        input: String,
+    },
+    /// Unload VoidMic: destroy virtual sink
+    Unload,
     #[cfg(feature = "gui")]
+    /// Launch the graphical interface
     Gui,
 }
 
@@ -64,6 +75,78 @@ fn main() -> Result<()> {
             }
             
             println!("VoidMic stopped.");
+        }
+        Some(Commands::Load { input }) => {
+            // NoiseTorch-like workflow: create virtual sink, start processing, daemonize
+            #[cfg(target_os = "linux")]
+            {
+                use std::process::Command;
+                
+                // Create virtual sink
+                match virtual_device::create_virtual_sink() {
+                    Ok(device) => {
+                        println!("✓ Virtual sink '{}' created", virtual_device::VIRTUAL_SINK_NAME);
+                        
+                        // Get the monitor source name (this is what apps should use as input)
+                        let monitor = virtual_device::get_monitor_source_name();
+                        
+                        // Spawn background process
+                        let exe = std::env::current_exe()?;
+                        let output_sink = virtual_device::VIRTUAL_SINK_NAME.to_string();
+                        
+                        let child = Command::new(&exe)
+                            .args(["run", "-i", &input, "-o", &output_sink])
+                            .stdin(std::process::Stdio::null())
+                            .stdout(std::process::Stdio::null())
+                            .stderr(std::process::Stdio::null())
+                            .spawn();
+                        
+                        match child {
+                            Ok(_) => {
+                                println!("✓ VoidMic started in background");
+                                println!("\n📢 Select '{}' as your microphone in applications", monitor);
+                                println!("\nTo stop: voidmic unload");
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to start background process: {}", e);
+                                // Cleanup sink
+                                let _ = virtual_device::destroy_virtual_sink(device.module_id);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to create virtual sink: {}", e);
+                        return Err(anyhow!("Virtual sink creation failed"));
+                    }
+                }
+            }
+            
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = input;
+                println!("Load mode is only supported on Linux.");
+                println!("Use 'voidmic run' on other platforms.");
+            }
+        }
+        Some(Commands::Unload) => {
+            #[cfg(target_os = "linux")]
+            {
+                // Kill any running voidmic processes (except ourselves)
+                let _ = std::process::Command::new("pkill")
+                    .args(["-f", "voidmic run"])
+                    .output();
+                
+                // Destroy virtual sink
+                match virtual_device::destroy_virtual_sink(0) {
+                    Ok(_) => println!("✓ VoidMic unloaded"),
+                    Err(e) => eprintln!("Warning: {}", e),
+                }
+            }
+            
+            #[cfg(not(target_os = "linux"))]
+            {
+                println!("Unload mode is only supported on Linux.");
+            }
         }
         #[cfg(feature = "gui")]
         Some(Commands::Gui) => {
