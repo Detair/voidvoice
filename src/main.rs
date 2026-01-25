@@ -6,8 +6,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 mod audio;
+#[cfg(feature = "gui")]
 mod gui;
 mod config;
+mod autostart;
+mod updater;
+mod virtual_device;
 
 #[derive(Parser)]
 #[command(name = "voidmic")]
@@ -26,6 +30,7 @@ enum Commands {
         #[arg(short, long, default_value = "default")]
         output: String,
     },
+    #[cfg(feature = "gui")]
     Gui,
 }
 
@@ -42,7 +47,7 @@ fn main() -> Result<()> {
             list_devices()?;
         }
         Some(Commands::Run { input, output }) => {
-            let _engine = audio::AudioEngine::start(&input, &output, &model_path)?;
+            let _engine = audio::AudioEngine::start(&input, &output, &model_path, 0.015, 1.0)?;
             println!("VoidMic Active (Hybrid). Press Ctrl+C to stop.");
             
             // Graceful shutdown handling
@@ -60,8 +65,18 @@ fn main() -> Result<()> {
             
             println!("VoidMic stopped.");
         }
-        Some(Commands::Gui) | None => {
+        #[cfg(feature = "gui")]
+        Some(Commands::Gui) => {
             gui::run_gui(model_path).map_err(|e| anyhow!("GUI Error: {}", e))?;
+        }
+        #[cfg(feature = "gui")]
+        None => {
+            gui::run_gui(model_path).map_err(|e| anyhow!("GUI Error: {}", e))?;
+        }
+        #[cfg(not(feature = "gui"))]
+        None => {
+            println!("GUI not available. Use 'voidmic run' for headless mode.");
+            println!("Compile with --features gui for GUI support.");
         }
     }
 

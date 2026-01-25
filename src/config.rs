@@ -4,10 +4,39 @@ use std::fs;
 use std::path::PathBuf;
 
 /// Application configuration for persisting user preferences.
-#[derive(Serialize, Deserialize, Default, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct AppConfig {
     pub last_input: String,
     pub last_output: String,
+    #[serde(default = "default_gate_threshold")]
+    pub gate_threshold: f32,
+    #[serde(default = "default_suppression_strength")]
+    pub suppression_strength: f32,
+    #[serde(default)]
+    pub start_on_boot: bool,
+    #[serde(default)]
+    pub output_filter_enabled: bool,
+}
+
+fn default_gate_threshold() -> f32 {
+    0.015
+}
+
+fn default_suppression_strength() -> f32 {
+    1.0
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            last_input: String::new(),
+            last_output: String::new(),
+            gate_threshold: default_gate_threshold(),
+            suppression_strength: default_suppression_strength(),
+            start_on_boot: false,
+            output_filter_enabled: false,
+        }
+    }
 }
 
 impl AppConfig {

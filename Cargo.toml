@@ -1,6 +1,6 @@
 [package]
 name = "voidmic"
-version = "0.4.0"
+version = "0.6.0"
 edition = "2021"
 authors = ["Detair"]
 description = "Hybrid AI Noise Reduction (RNNoise + Smart Gate)"
@@ -18,9 +18,20 @@ clap = { version = "4.5", features = ["derive"] }
 anyhow = "1.0"
 log = "0.4"
 env_logger = "0.11"
-eframe = "0.26"
 open = "5.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 directories = "5.0"
 ctrlc = "3.4"
+dirs = "6.0.0"
+reqwest = { version = "0.13.1", features = ["blocking", "json"] }
+semver = "1.0.27"
+
+# GUI dependencies (optional for headless mode)
+eframe = { version = "0.26", optional = true }
+tray-icon = { version = "0.21.3", default-features = false, optional = true }
+muda = { version = "0.17.1", default-features = false, features = ["gtk"], optional = true }
+
+[features]
+default = ["gui"]
+gui = ["eframe", "tray-icon", "muda"]

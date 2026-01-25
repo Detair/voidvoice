@@ -15,7 +15,7 @@ It uses a **Hybrid Engine**:
 - [x] Cross-platform support (Linux, Windows, macOS)
 - [x] Hybrid AI + Gate Engine
 - [ ] Auto-updater
-- [ ] Tray icon support
+- [x] Tray icon support
 - [ ] Dynamic threshold calibration
 
 ## 🚀 Features
