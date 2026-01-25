@@ -1,0 +1,30 @@
+app-id: com.voidmic.VoidMic
+runtime: org.freedesktop.Platform
+runtime-version: '23.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: voidmic
+finish-args:
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --device=all       # Access to microphone hardware
+  - --socket=pulseaudio # Access to audio mixing server
+  - --filesystem=xdg-config/voidmic:create # Save config
+  - --talk-name=org.freedesktop.Notifications
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/voidmic/cargo
+modules:
+  - name: voidmic
+    buildsystem: simple
+    build-commands:
+      - cargo build --release --offline
+      - install -D target/release/voidmic /app/bin/voidmic
+    sources:
+      - type: dir
+        path: ..
+    # Note: For a strictly offline build, you would normally vendor crates.
+    # For local dev on Fedora Atomic, run flatpak-builder with --share=network
