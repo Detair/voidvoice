@@ -13,6 +13,7 @@ mod autostart;
 mod updater;
 mod virtual_device;
 mod pulse_info;
+mod echo_cancel;
 
 #[derive(Parser)]
 #[command(name = "voidmic")]
@@ -58,7 +59,7 @@ fn main() -> Result<()> {
             list_devices()?;
         }
         Some(Commands::Run { input, output }) => {
-            let _engine = audio::AudioEngine::start(&input, &output, &model_path, 0.015, 1.0)?;
+            let _engine = audio::AudioEngine::start(&input, &output, &model_path, 0.015, 1.0, false, None)?;
             println!("VoidMic Active (Hybrid). Press Ctrl+C to stop.");
             
             // Graceful shutdown handling

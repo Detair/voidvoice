@@ -16,6 +16,8 @@ pub struct AppConfig {
     pub start_on_boot: bool,
     #[serde(default)]
     pub output_filter_enabled: bool,
+    #[serde(default)]
+    pub echo_cancel_enabled: bool,
 }
 
 fn default_gate_threshold() -> f32 {
@@ -35,6 +37,7 @@ impl Default for AppConfig {
             suppression_strength: default_suppression_strength(),
             start_on_boot: false,
             output_filter_enabled: false,
+            echo_cancel_enabled: false,
         }
     }
 }

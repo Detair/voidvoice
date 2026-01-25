@@ -1,6 +1,6 @@
 use eframe::egui;
 use cpal::traits::{DeviceTrait, HostTrait};
-use crate::audio::AudioEngine;
+use crate::audio::{AudioEngine, OutputFilterEngine};
 use crate::config::AppConfig;
 use std::process::Command;
 use std::path::PathBuf;
@@ -61,6 +61,10 @@ struct VoidMicApp {
     virtual_sink_module_id: Option<u32>,
     connected_apps: Vec<String>,
     last_app_refresh: std::time::Instant,
+    // Output Filter (Speaker Denoising)
+    output_filter_engine: Option<OutputFilterEngine>,
+    // Echo Cancellation
+    selected_reference: String,
 }
 
 const QUIT_ID: &str = "quit";
@@ -100,6 +104,8 @@ impl VoidMicApp {
             outputs.first().cloned().unwrap_or_else(|| "default".to_string())
         };
 
+        let default_ref = inputs.first().cloned().unwrap_or_else(|| "default".to_string());
+
         Self {
             input_devices: inputs,
             output_devices: outputs,
@@ -117,7 +123,9 @@ impl VoidMicApp {
             update_info: None,
             virtual_sink_module_id: None,
             connected_apps: Vec::new(),
+            output_filter_engine: None,
             last_app_refresh: std::time::Instant::now(),
+            selected_reference: default_ref,
         }
     }
 
@@ -325,6 +333,44 @@ impl eframe::App for VoidMicApp {
                 }
             }
 
+            // Advanced Features
+            ui.add_space(10.0);
+            ui.heading("Advanced Features");
+            
+            // Output Filter (Speaker Denoising)
+            ui.horizontal(|ui| {
+                 if ui.checkbox(&mut self.config.output_filter_enabled, "Filter Output (Speaker Denoising)").changed() {
+                     self.mark_config_dirty();
+                 }
+                 ui.label(egui::RichText::new("⚠️ ~100ms latency").size(10.0).color(egui::Color32::YELLOW));
+            });
+
+            // Echo Cancellation
+            ui.horizontal(|ui| {
+                 if ui.checkbox(&mut self.config.echo_cancel_enabled, "Echo Cancellation").changed() {
+                     self.mark_config_dirty();
+                 }
+            });
+
+            if self.config.echo_cancel_enabled || self.config.output_filter_enabled {
+                ui.horizontal(|ui| {
+                    ui.label("Reference Input (Monitor):");
+                    egui::ComboBox::from_id_source("ref_combo")
+                        .selected_text(&self.selected_reference)
+                        .width(200.0)
+                        .show_ui(ui, |ui| {
+                             for dev in &self.input_devices {
+                                 if ui.selectable_value(&mut self.selected_reference, dev.clone(), dev).changed() {
+                                     // No config persistence for this yet
+                                 }
+                             }
+                        });
+                    ui.label(egui::RichText::new("ℹ️ Select speaker monitor").size(10.0));
+                });
+            }
+
+            ui.add_space(10.0);
+
             // Connected Apps display (refresh every 2 seconds)
             #[cfg(target_os = "linux")]
             {
@@ -358,6 +404,7 @@ impl eframe::App for VoidMicApp {
             if btn.clicked() {
                 if is_running {
                     self.engine = None;
+                    self.output_filter_engine = None;
                     self.status_msg = "Stopped".to_string();
                 } else {
                     self.status_msg = "Initializing Hybrid Engine...".to_string();
@@ -390,7 +437,27 @@ impl eframe::App for VoidMicApp {
                         }
                     }
                     
-                    match AudioEngine::start(&self.selected_input, &self.selected_output, &self.model_path, self.config.gate_threshold, self.config.suppression_strength) {
+                    
+                    // Start Output Filter if enabled
+                    if self.config.output_filter_enabled {
+                         match OutputFilterEngine::start(&self.selected_reference, &self.selected_output, self.config.suppression_strength) {
+                             Ok(engine) => self.output_filter_engine = Some(engine),
+                             Err(e) => {
+                                 self.status_msg = format!("Output Filter Error: {}", e);
+                                 // Don't abort main engine?
+                             }
+                         }
+                    }
+
+                    match AudioEngine::start(
+                        &self.selected_input, 
+                        &self.selected_output, 
+                        &self.model_path, 
+                        self.config.gate_threshold, 
+                        self.config.suppression_strength,
+                        self.config.echo_cancel_enabled,
+                        if self.config.echo_cancel_enabled { Some(&self.selected_reference) } else { None }
+                    ) {
                         Ok(engine) => {
                             self.engine = Some(engine);
                             self.status_msg = "Active (RNNoise + Gate)".to_string();

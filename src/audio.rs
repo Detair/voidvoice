@@ -8,6 +8,8 @@ use std::thread;
 use std::time::Duration;
 use std::path::Path;
 use nnnoiseless::DenoiseState;
+use crate::echo_cancel::EchoCanceller;
+
 
 const SAMPLE_RATE: u32 = 48000;
 const FRAME_SIZE: usize = 480; // 10ms frames (480 samples at 48kHz)
@@ -31,6 +33,7 @@ const FADE_MS: u32 = 10;       // Fade duration to eliminate clicks/pops
 pub struct AudioEngine {
     _input_stream: cpal::Stream,
     _output_stream: cpal::Stream,
+    _reference_stream: Option<cpal::Stream>,
     is_running: Arc<AtomicBool>,
     pub volume_level: Arc<AtomicU32>,
     pub calibration_mode: Arc<AtomicBool>,
@@ -50,9 +53,17 @@ impl AudioEngine {
     /// 
     /// # Example
     /// ```no_run
-    /// let engine = AudioEngine::start("default", "VoidMic_Clean", Path::new("."), 0.015, 1.0)?;
+    /// let engine = AudioEngine::start("default", "VoidMic_Clean", Path::new("."), 0.015, 1.0, false, None)?;
     /// ```
-    pub fn start(input_name: &str, output_name: &str, _model_dir: &Path, gate_threshold: f32, suppression_strength: f32) -> Result<Self> {
+    pub fn start(
+        input_name: &str, 
+        output_name: &str, 
+        _model_dir: &Path, 
+        gate_threshold: f32, 
+        suppression_strength: f32,
+        echo_cancel_enabled: bool,
+        reference_device_name: Option<&str>
+    ) -> Result<Self> {
         let host = cpal::default_host();
         
         let input_device = if input_name == "default" {
@@ -85,6 +96,16 @@ impl AudioEngine {
         let rb_out = HeapRb::<f32>::new(buffer_size);
         let (mut prod_out, mut cons_out) = rb_out.split();
 
+        // Reference Stream Ring Buffer (for Echo Cancellation)
+        let (mut prod_ref, mut cons_ref) = if echo_cancel_enabled {
+            let rb_ref = HeapRb::<f32>::new(buffer_size);
+            let (p, c) = rb_ref.split();
+            (Some(p), Some(c))
+        } else {
+            (None, None)
+        };
+
+
         let input_stream = input_device.build_input_stream(
             &config,
             move |data: &[f32], _| {
@@ -107,6 +128,47 @@ impl AudioEngine {
             |err| eprintln!("Output error: {}", err),
             None,
         )?;
+        
+        let _reference_stream = if echo_cancel_enabled {
+            // Setup reference stream (input from speaker monitor)
+            let ref_name = reference_device_name.unwrap_or("default");
+            
+            // Try to find device
+            let ref_device = if ref_name == "default" {
+                 // Try to find default input? No.
+                 // We require explicit selection or rely on system default input which is likely Mic.
+                 // If echo cancel is enabled but no ref device, we try to capture default output monitor.
+                 // On PulseAudio, this is tricky via cpal.
+                 // For now, we assume user selects the monitor as an input device.
+                 host.input_devices()?.find(|d| d.name().ok().as_deref() == Some(ref_name))
+            } else {
+                 host.input_devices()?.find(|d| d.name().ok().as_deref() == Some(ref_name))
+            };
+            
+            if let Some(device) = ref_device {
+                let stream = device.build_input_stream(
+                    &config,
+                    move |data: &[f32], _| {
+                         if let Some(prod) = &mut prod_ref {
+                             let _ = prod.push_slice(data);
+                         }
+                    },
+                    |err| eprintln!("Reference input error: {}", err),
+                    None,
+                ).ok();
+                stream
+            } else {
+                eprintln!("Reference device '{}' not found", ref_name);
+                None
+            }
+        } else {
+            None
+        };
+        
+        if let Some(stream) = &_reference_stream {
+             stream.play()?;
+        }
+
 
         let is_running = Arc::new(AtomicBool::new(true));
         let run_flag = is_running.clone();
@@ -119,6 +181,12 @@ impl AudioEngine {
 
         thread::spawn(move || {
             let mut denoise = DenoiseState::new();
+            let mut echo_canceller = if echo_cancel_enabled {
+                 Some(EchoCanceller::new())
+            } else {
+                 None
+            };
+            
             let mut input_frame = [0.0f32; FRAME_SIZE];
             let mut output_frame = [0.0f32; FRAME_SIZE];
             
@@ -140,7 +208,23 @@ impl AudioEngine {
                 if cons_in.occupied_len() >= FRAME_SIZE {
                     cons_in.pop_slice(&mut input_frame);
 
-                    // 1. Denoise (RNNoise)
+                     // 1. Echo Cancellation
+                    if let (Some(cons), Some(aec)) = (&mut cons_ref, &mut echo_canceller) {
+                        // We need reference samples to match input frame
+                        if cons.occupied_len() >= FRAME_SIZE {
+                             // Read reference frame
+                             let mut ref_frame = [0.0f32; FRAME_SIZE];
+                             cons.pop_slice(&mut ref_frame);
+                             
+                             // Process through AEC
+                             let processed = aec.process_frame(&input_frame, &ref_frame);
+                             input_frame.copy_from_slice(&processed);
+                        } else {
+                            // Underrun
+                        }
+                    }
+
+                    // 2. Denoise (RNNoise)
                     denoise.process_frame(&mut output_frame, &input_frame);
                     
                     // 1b. Blend raw and denoised based on suppression strength
@@ -225,6 +309,7 @@ impl AudioEngine {
         Ok(Self {
             _input_stream: input_stream,
             _output_stream: output_stream,
+             _reference_stream,
             is_running,
             volume_level,
             calibration_mode,
