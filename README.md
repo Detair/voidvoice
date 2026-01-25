@@ -1,13 +1,22 @@
 # VoidMic 🌌 (Hybrid Edition)
 
-[![AI Assisted](https://img.shields.io/badge/AI-Assisted-blue)](https://github.com/google-gemini)
+[![CI](https://github.com/Detair/voidvoice/actions/workflows/ci.yml/badge.svg)](https://github.com/Detair/voidvoice/actions/workflows/ci.yml)
+[![Release](https://github.com/Detair/voidvoice/actions/workflows/release.yml/badge.svg)](https://github.com/Detair/voidvoice/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![AI Assisted](https://img.shields.io/badge/AI-Assisted-blue)](https://github.com/google-gemini)
 
 **VoidMic** is a high-fidelity noise reduction tool designed for high-noise environments like **Sim Racing** and **Mechanical Keyboards**.
 
 It uses a **Hybrid Engine**:
 1.  **RNN Denoising (RNNoise):** Removes steady background noise (fans, hum, traffic).
 2.  **Smart Noise Gate:** Actively silences transient clicks (keyboards, shifters) when you aren't speaking.
+
+## 🗺️ Roadmap
+- [x] Cross-platform support (Linux, Windows, macOS)
+- [x] Hybrid AI + Gate Engine
+- [ ] Auto-updater
+- [ ] Tray icon support
+- [ ] Dynamic threshold calibration
 
 ## 🚀 Features
 
