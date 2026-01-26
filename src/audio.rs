@@ -25,6 +25,43 @@ const ATTACK_MS: u32 = 5;      // Fast attack to avoid clipping first syllable
 const RELEASE_MS: u32 = 200;   // Hold gate open 200ms after speech stops (natural pauses)
 const FADE_MS: u32 = 10;       // Fade duration to eliminate clicks/pops
 
+/// Tracks minimum RMS over a sliding window to estimate noise floor.
+struct NoiseFloorTracker {
+    window: Vec<f32>,
+    window_size: usize,
+    current_floor: f32,
+}
+
+impl NoiseFloorTracker {
+    fn new(window_seconds: f32) -> Self {
+        // Window size in frames (10ms frames)
+        let window_size = (window_seconds * 100.0) as usize; // e.g., 3s = 300 frames
+        Self {
+            window: Vec::with_capacity(window_size),
+            window_size,
+            current_floor: 0.01, // Initial estimate
+        }
+    }
+    
+    fn update(&mut self, rms: f32) {
+        self.window.push(rms);
+        if self.window.len() > self.window_size {
+            self.window.remove(0);
+        }
+        // Use 10th percentile as noise floor estimate (robust to speech)
+        if self.window.len() >= 10 {
+            let mut sorted: Vec<f32> = self.window.clone();
+            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let idx = sorted.len() / 10; // 10th percentile
+            self.current_floor = sorted[idx];
+        }
+    }
+    
+    fn floor(&self) -> f32 {
+        self.current_floor
+    }
+}
+
 /// Audio processing engine that combines RNNoise denoising with a smart noise gate.
 /// 
 /// The engine runs in a separate thread and processes audio in real-time using:
@@ -62,7 +99,8 @@ impl AudioEngine {
         gate_threshold: f32, 
         suppression_strength: f32,
         echo_cancel_enabled: bool,
-        reference_device_name: Option<&str>
+        reference_device_name: Option<&str>,
+        dynamic_threshold_enabled: bool
     ) -> Result<Self> {
         let host = cpal::default_host();
         
@@ -203,6 +241,9 @@ impl AudioEngine {
             let attack_samples = (SAMPLE_RATE / 1000) * ATTACK_MS;
             let release_samples = (SAMPLE_RATE / 1000) * RELEASE_MS;
             let fade_samples = (SAMPLE_RATE / 1000) * FADE_MS;
+            
+            // Noise floor tracker for dynamic threshold
+            let mut noise_floor_tracker = NoiseFloorTracker::new(3.0); // 3 second window
 
             while run_flag.load(Ordering::Relaxed) {
                 if cons_in.occupied_len() >= FRAME_SIZE {
@@ -254,7 +295,16 @@ impl AudioEngine {
                     }
 
                     // Gate decision with hysteresis
-                    if rms > gate_threshold {
+                    // Dynamic threshold: floor * 1.5 + margin, clamped to safe range
+                    let effective_threshold = if dynamic_threshold_enabled {
+                        noise_floor_tracker.update(rms);
+                        let dynamic = noise_floor_tracker.floor() * 1.5 + 0.003;
+                        dynamic.clamp(0.005, 0.08)
+                    } else {
+                        gate_threshold
+                    };
+                    
+                    if rms > effective_threshold {
                         samples_since_close += FRAME_SIZE as u32;
                         
                         // Open gate after attack time (prevents clipping first syllable)

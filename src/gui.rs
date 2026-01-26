@@ -287,15 +287,23 @@ impl eframe::App for VoidMicApp {
 
             // Threshold Controls
             ui.horizontal(|ui| {
-                ui.label("Gate Threshold:");
-                let slider = egui::Slider::new(&mut self.config.gate_threshold, 0.005..=0.05)
-                    .text("")
-                    .fixed_decimals(3);
-                if ui.add(slider).changed() {
+                // Dynamic Threshold checkbox
+                if ui.checkbox(&mut self.config.dynamic_threshold_enabled, "Auto-Gate").changed() {
                     self.mark_config_dirty();
                 }
                 
-                let calibrate_enabled = self.engine.is_some() && !self.is_calibrating;
+                // Manual slider (disabled when dynamic is enabled)
+                ui.add_enabled_ui(!self.config.dynamic_threshold_enabled, |ui| {
+                    ui.label("Gate Threshold:");
+                    let slider = egui::Slider::new(&mut self.config.gate_threshold, 0.005..=0.05)
+                        .text("")
+                        .fixed_decimals(3);
+                    if ui.add(slider).changed() {
+                        self.mark_config_dirty();
+                    }
+                });
+                
+                let calibrate_enabled = self.engine.is_some() && !self.is_calibrating && !self.config.dynamic_threshold_enabled;
                 if ui.add_enabled(calibrate_enabled, egui::Button::new("🎯 Calibrate")).clicked() {
                     if let Some(engine) = &self.engine {
                         engine.calibration_mode.store(true, Ordering::Relaxed);
@@ -456,7 +464,8 @@ impl eframe::App for VoidMicApp {
                         self.config.gate_threshold, 
                         self.config.suppression_strength,
                         self.config.echo_cancel_enabled,
-                        if self.config.echo_cancel_enabled { Some(&self.selected_reference) } else { None }
+                        if self.config.echo_cancel_enabled { Some(&self.selected_reference) } else { None },
+                        self.config.dynamic_threshold_enabled
                     ) {
                         Ok(engine) => {
                             self.engine = Some(engine);

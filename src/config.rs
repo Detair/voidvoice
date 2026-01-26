@@ -18,6 +18,8 @@ pub struct AppConfig {
     pub output_filter_enabled: bool,
     #[serde(default)]
     pub echo_cancel_enabled: bool,
+    #[serde(default)]
+    pub dynamic_threshold_enabled: bool,
 }
 
 fn default_gate_threshold() -> f32 {
@@ -38,6 +40,7 @@ impl Default for AppConfig {
             start_on_boot: false,
             output_filter_enabled: false,
             echo_cancel_enabled: false,
+            dynamic_threshold_enabled: false,
         }
     }
 }
