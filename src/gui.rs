@@ -20,18 +20,23 @@ use crate::pulse_info;
 /// # Returns
 /// Result indicating success or failure of the GUI application
 pub fn run_gui(model_path: PathBuf) -> eframe::Result<()> {
+    // Load config early to determine if we should start minimized
+    let config = AppConfig::load();
+    let start_minimized = config.start_minimized;
+    
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([450.0, 450.0])
-            .with_resizable(false),
+            .with_resizable(false)
+            .with_visible(!start_minimized),
         ..Default::default()
     };
     eframe::run_native(
         "VoidMic",
         options,
-        Box::new(|cc| {
+        Box::new(move |cc| {
             setup_custom_style(&cc.egui_ctx);
-            Box::new(VoidMicApp::new(model_path))
+            Box::new(VoidMicApp::new_with_config(model_path, config))
         }),
     )
 }
@@ -70,14 +75,16 @@ struct VoidMicApp {
 
 const QUIT_ID: &str = "quit";
 const SHOW_ID: &str = "show";
+const TOGGLE_ID: &str = "toggle";
 
 impl VoidMicApp {
-    fn new(model_path: PathBuf) -> Self {
+    fn new_with_config(model_path: PathBuf, config: AppConfig) -> Self {
         // Tray Setup
         let tray_menu = Menu::new();
+        let toggle_item = MenuItem::with_id(TOGGLE_ID, "Enable", true, None);
         let show_item = MenuItem::with_id(SHOW_ID, "Show/Hide", true, None);
         let quit_item = MenuItem::with_id(QUIT_ID, "Quit", true, None);
-        let _ = tray_menu.append_items(&[&show_item, &quit_item]);
+        let _ = tray_menu.append_items(&[&toggle_item, &show_item, &quit_item]);
 
         let icon = generate_icon();
         let tray_icon = TrayIconBuilder::new()
@@ -90,7 +97,6 @@ impl VoidMicApp {
         // Start async update check
         let update_receiver = Some(updater::check_for_updates_async());
         
-        let config = AppConfig::load();
         let (inputs, outputs) = get_devices();
         
         let default_in = if inputs.contains(&config.last_input) {
@@ -106,8 +112,10 @@ impl VoidMicApp {
         };
 
         let default_ref = inputs.first().cloned().unwrap_or_else(|| "default".to_string());
+        
+        let auto_start = config.auto_start_processing;
 
-        Self {
+        let mut app = Self {
             input_devices: inputs,
             output_devices: outputs,
             selected_input: default_in,
@@ -127,7 +135,45 @@ impl VoidMicApp {
             output_filter_engine: None,
             last_app_refresh: std::time::Instant::now(),
             selected_reference: default_ref,
+        };
+        
+        // Auto-start processing if enabled
+        if auto_start {
+            app.start_engine();
         }
+        
+        app
+    }
+    
+    fn start_engine(&mut self) {
+        if self.engine.is_some() {
+            return; // Already running
+        }
+        
+        match AudioEngine::start(
+            &self.selected_input,
+            &self.selected_output,
+            &self.model_path,
+            self.config.gate_threshold,
+            self.config.suppression_strength,
+            self.config.dynamic_threshold_enabled,
+            None,
+            self.config.echo_cancel_enabled,
+        ) {
+            Ok(engine) => {
+                self.engine = Some(engine);
+                self.status_msg = "Running".to_string();
+            }
+            Err(e) => {
+                self.status_msg = format!("Error: {}", e);
+                log::error!("Failed to start engine: {}", e);
+            }
+        }
+    }
+    
+    fn stop_engine(&mut self) {
+        self.engine = None;
+        self.status_msg = "Stopped".to_string();
     }
 
     fn mark_config_dirty(&mut self) {
@@ -330,6 +376,21 @@ impl eframe::App for VoidMicApp {
                // For simplicity, let's just ensure it is visible and focused.
                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            } else if event.id.0 == TOGGLE_ID {
+                // Toggle engine on/off
+                if self.engine.is_some() {
+                    self.stop_engine();
+                    // Update tray tooltip
+                    if let Some(ref tray) = self.tray_icon {
+                        let _ = tray.set_tooltip(Some("VoidMic - Disabled"));
+                    }
+                } else {
+                    self.start_engine();
+                    // Update tray tooltip
+                    if let Some(ref tray) = self.tray_icon {
+                        let _ = tray.set_tooltip(Some("VoidMic - Active"));
+                    }
+                }
             }
         }
 
@@ -550,6 +611,20 @@ impl eframe::App for VoidMicApp {
                              self.status_msg = "Autostart disabled".to_string();
                          }
                      }
+                     self.save_config_now();
+                 }
+                 
+                 // Start Minimized checkbox
+                 let mut start_minimized = self.config.start_minimized;
+                 if ui.checkbox(&mut start_minimized, "Start Minimized to Tray").changed() {
+                     self.config.start_minimized = start_minimized;
+                     self.save_config_now();
+                 }
+                 
+                 // Auto-Start Processing checkbox  
+                 let mut auto_start = self.config.auto_start_processing;
+                 if ui.checkbox(&mut auto_start, "Auto-Start Processing").changed() {
+                     self.config.auto_start_processing = auto_start;
                      self.save_config_now();
                  }
             });
