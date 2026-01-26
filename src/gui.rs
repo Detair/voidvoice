@@ -5,7 +5,7 @@ use crate::config::AppConfig;
 use std::process::Command;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
-use tray_icon::{TrayIconBuilder, TrayIcon, menu::{Menu, MenuItem, MenuEvent, MenuId}};
+use tray_icon::{TrayIconBuilder, TrayIcon, menu::{Menu, MenuItem, MenuEvent}};
 use tray_icon::Icon;
 use crate::autostart;
 use crate::updater::{self, UpdateInfo};
@@ -53,7 +53,8 @@ struct VoidMicApp {
     model_path: PathBuf,
     config: AppConfig,
     config_dirty: bool,
-    tray_icon: Option<TrayIcon>, // Keep alive
+    #[allow(dead_code)] // Kept alive for tray icon
+    tray_icon: Option<TrayIcon>,
     is_quitting: bool,
     is_calibrating: bool,
     update_receiver: Option<std::sync::mpsc::Receiver<Option<UpdateInfo>>>,
@@ -151,7 +152,7 @@ impl VoidMicApp {
 }
 
 impl eframe::App for VoidMicApp {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Handle Tray Events
         if let Ok(event) = MenuEvent::receiver().try_recv() {
             if event.id.0 == QUIT_ID {

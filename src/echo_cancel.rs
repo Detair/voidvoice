@@ -44,6 +44,7 @@ impl EchoCanceller {
     }
     
     /// Resets the echo canceller state.
+    #[allow(dead_code)]
     pub fn reset(&mut self) {
         self.aec = VoipAec3::builder(SAMPLE_RATE, 1, 1)
             .build()

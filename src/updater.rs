@@ -13,6 +13,7 @@ const GITHUB_API_URL: &str = "https://api.github.com/repos/Detair/voidvoice/rele
 pub struct UpdateInfo {
     pub version: String,
     pub download_url: String,
+    #[allow(dead_code)] // May be used in release notes display
     pub release_notes: String,
 }
 

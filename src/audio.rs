@@ -14,11 +14,6 @@ use crate::echo_cancel::EchoCanceller;
 const SAMPLE_RATE: u32 = 48000;
 const FRAME_SIZE: usize = 480; // 10ms frames (480 samples at 48kHz)
 
-// Gate Threshold: -36dB in linear amplitude
-// Derived from testing with mechanical keyboards and sim racing gear.
-// Typical speech RMS: 0.02-0.15, keyboard clicks (post-RNNoise): 0.005-0.012
-// Setting threshold at 0.015 provides good separation while avoiding false triggers.
-const GATE_THRESHOLD: f32 = 0.015;
 
 // Gate timing constants (all in milliseconds)
 const ATTACK_MS: u32 = 5;      // Fast attack to avoid clipping first syllable

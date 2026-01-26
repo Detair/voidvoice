@@ -8,6 +8,7 @@ use std::process::Command;
 #[derive(Debug, Clone)]
 pub struct ConnectedApp {
     pub name: String,
+    #[allow(dead_code)]
     pub source_output_id: u32,
 }
 

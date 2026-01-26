@@ -162,6 +162,7 @@ pub fn disable_autostart() -> Result<(), String> {
 }
 
 /// Checks if autostart is currently enabled.
+#[allow(dead_code)]
 pub fn is_autostart_enabled() -> bool {
     #[cfg(target_os = "linux")]
     {
