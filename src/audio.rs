@@ -494,3 +494,47 @@ impl Drop for OutputFilterEngine {
         self.is_running.store(false, Ordering::Relaxed);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_noise_floor_tracker_initialization() {
+        let tracker = NoiseFloorTracker::new(3.0);
+        assert_eq!(tracker.window_size, 300);
+        assert!((tracker.floor() - 0.01).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_noise_floor_tracks_quiet_environment() {
+        let mut tracker = NoiseFloorTracker::new(1.0);
+        for _ in 0..100 {
+            tracker.update(0.005);
+        }
+        let floor = tracker.floor();
+        assert!(floor >= 0.004 && floor <= 0.006, "Floor should be ~0.005, got {}", floor);
+    }
+
+    #[test]
+    fn test_noise_floor_ignores_speech_spikes() {
+        let mut tracker = NoiseFloorTracker::new(1.0);
+        for _ in 0..90 { tracker.update(0.01); }
+        for _ in 0..10 { tracker.update(0.15); }
+        let floor = tracker.floor();
+        assert!(floor < 0.05, "Floor should ignore speech, got {}", floor);
+    }
+
+    #[test]
+    fn test_dynamic_threshold_formula() {
+        let floor = 0.02f32;
+        let threshold = (floor * 1.5 + 0.003).clamp(0.005, 0.08);
+        assert!((threshold - 0.033).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_threshold_clamp_bounds() {
+        assert_eq!((0.001f32 * 1.5 + 0.003).clamp(0.005, 0.08), 0.005);
+        assert_eq!((0.1f32 * 1.5 + 0.003).clamp(0.005, 0.08), 0.08);
+    }
+}
