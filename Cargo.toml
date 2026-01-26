@@ -1,6 +1,6 @@
 [package]
 name = "voidmic"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 authors = ["Detair"]
 description = "Hybrid AI Noise Reduction (RNNoise + Smart Gate)"
