@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use ringbuf::traits::{Consumer, Producer, Split, Observer};
 use ringbuf::HeapRb;
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -9,10 +10,9 @@ use std::time::Duration;
 use std::path::Path;
 use nnnoiseless::DenoiseState;
 use crate::echo_cancel::EchoCanceller;
+use crate::constants::{SAMPLE_RATE, FRAME_SIZE};
 
 
-const SAMPLE_RATE: u32 = 48000;
-const FRAME_SIZE: usize = 480; // 10ms frames (480 samples at 48kHz)
 
 
 // Gate timing constants (all in milliseconds)
@@ -22,7 +22,7 @@ const FADE_MS: u32 = 10;       // Fade duration to eliminate clicks/pops
 
 /// Tracks minimum RMS over a sliding window to estimate noise floor.
 struct NoiseFloorTracker {
-    window: Vec<f32>,
+    window: VecDeque<f32>,
     window_size: usize,
     current_floor: f32,
 }
@@ -32,20 +32,20 @@ impl NoiseFloorTracker {
         // Window size in frames (10ms frames)
         let window_size = (window_seconds * 100.0) as usize; // e.g., 3s = 300 frames
         Self {
-            window: Vec::with_capacity(window_size),
+            window: VecDeque::with_capacity(window_size),
             window_size,
             current_floor: 0.01, // Initial estimate
         }
     }
     
     fn update(&mut self, rms: f32) {
-        self.window.push(rms);
+        self.window.push_back(rms);
         if self.window.len() > self.window_size {
-            self.window.remove(0);
+            self.window.pop_front();
         }
         // Use 10th percentile as noise floor estimate (robust to speech)
         if self.window.len() >= 10 {
-            let mut sorted: Vec<f32> = self.window.clone();
+            let mut sorted: Vec<f32> = self.window.iter().cloned().collect();
             sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
             let idx = sorted.len() / 10; // 10th percentile
             self.current_floor = sorted[idx];

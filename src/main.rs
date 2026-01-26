@@ -14,6 +14,7 @@ mod updater;
 mod virtual_device;
 mod pulse_info;
 mod echo_cancel;
+mod constants;
 
 #[derive(Parser)]
 #[command(name = "voidmic")]
