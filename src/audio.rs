@@ -9,6 +9,7 @@ use std::thread;
 use std::time::Duration;
 use std::path::Path;
 use nnnoiseless::DenoiseState;
+use log::{info, warn, debug};
 use crate::echo_cancel::EchoCanceller;
 use crate::constants::{SAMPLE_RATE, FRAME_SIZE};
 
@@ -98,20 +99,29 @@ impl AudioEngine {
         dynamic_threshold_enabled: bool
     ) -> Result<Self> {
         let host = cpal::default_host();
+        info!("Audio host: {}", host.id().name());
         
         let input_device = if input_name == "default" {
-            host.default_input_device().context("No default input found")?
+            host.default_input_device()
+                .context("No default input device found. Please check your audio settings.")?    
         } else {
-            host.input_devices()?.find(|d| d.name().ok().as_deref() == Some(input_name))
-                .context("Input device not found")?
+            host.input_devices()
+                .context("Failed to enumerate input devices")?
+                .find(|d| d.name().ok().as_deref() == Some(input_name))
+                .with_context(|| format!("Input device '{}' not found. Run 'voidmic list' to see available devices.", input_name))?
         };
+        info!("Using input device: {}", input_device.name().unwrap_or_default());
 
         let output_device = if output_name == "default" {
-            host.default_output_device().context("No default output found")?
+            host.default_output_device()
+                .context("No default output device found. Please check your audio settings.")?
         } else {
-            host.output_devices()?.find(|d| d.name().ok().as_deref() == Some(output_name))
-                .context("Output device not found")?
+            host.output_devices()
+                .context("Failed to enumerate output devices")?
+                .find(|d| d.name().ok().as_deref() == Some(output_name))
+                .with_context(|| format!("Output device '{}' not found. Run 'voidmic list' to see available devices.", output_name))?
         };
+        info!("Using output device: {}", output_device.name().unwrap_or_default());
 
         let config = cpal::StreamConfig {
             channels: 1,
@@ -144,7 +154,7 @@ impl AudioEngine {
             move |data: &[f32], _| {
                 let _ = prod_in.push_slice(data);
             },
-            |err| eprintln!("Input error: {}", err),
+            |err| warn!("Input stream error: {}", err),
             None,
         )?;
 
@@ -158,7 +168,7 @@ impl AudioEngine {
                    }
                 }
             },
-            |err| eprintln!("Output error: {}", err),
+            |err| warn!("Output stream error: {}", err),
             None,
         )?;
         
@@ -186,12 +196,12 @@ impl AudioEngine {
                              let _ = prod.push_slice(data);
                          }
                     },
-                    |err| eprintln!("Reference input error: {}", err),
+                    |err| warn!("Reference input error: {}", err),
                     None,
                 ).ok();
                 stream
             } else {
-                eprintln!("Reference device '{}' not found", ref_name);
+                warn!("Reference device '{}' not found for echo cancellation", ref_name);
                 None
             }
         } else {
@@ -424,7 +434,7 @@ impl OutputFilterEngine {
             move |data: &[f32], _| {
                 let _ = prod_in.push_slice(data);
             },
-            |err| eprintln!("Output filter input error: {}", err),
+            |err| warn!("Output filter input error: {}", err),
             None,
         )?;
 
@@ -438,7 +448,7 @@ impl OutputFilterEngine {
                    }
                 }
             },
-            |err| eprintln!("Output filter output error: {}", err),
+            |err| warn!("Output filter output error: {}", err),
             None,
         )?;
 

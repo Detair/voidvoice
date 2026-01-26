@@ -75,3 +75,69 @@ fn config_path() -> Option<PathBuf> {
     ProjectDirs::from("com", "voidmic", "voidmic")
         .map(|dirs| dirs.config_dir().join("config.json"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_config_values() {
+        let config = AppConfig::default();
+        assert_eq!(config.gate_threshold, 0.015);
+        assert_eq!(config.suppression_strength, 1.0);
+        assert!(!config.start_on_boot);
+        assert!(!config.echo_cancel_enabled);
+        assert!(!config.dynamic_threshold_enabled);
+    }
+
+    #[test]
+    fn test_config_serialization() {
+        let config = AppConfig {
+            last_input: "Test Mic".to_string(),
+            last_output: "Test Output".to_string(),
+            gate_threshold: 0.02,
+            suppression_strength: 0.8,
+            start_on_boot: true,
+            output_filter_enabled: false,
+            echo_cancel_enabled: true,
+            dynamic_threshold_enabled: true,
+        };
+        
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("\"gate_threshold\":0.02"));
+        assert!(json.contains("\"echo_cancel_enabled\":true"));
+    }
+
+    #[test]
+    fn test_config_deserialization_with_defaults() {
+        // Minimal JSON - should fill in defaults
+        let json = r#"{"last_input":"Mic","last_output":"Out"}"#;
+        let config: AppConfig = serde_json::from_str(json).unwrap();
+        
+        assert_eq!(config.last_input, "Mic");
+        assert_eq!(config.gate_threshold, 0.015); // Default
+        assert_eq!(config.suppression_strength, 1.0); // Default
+        assert!(!config.echo_cancel_enabled); // Default false
+    }
+
+    #[test]
+    fn test_config_roundtrip() {
+        let original = AppConfig {
+            last_input: "Input".to_string(),
+            last_output: "Output".to_string(),
+            gate_threshold: 0.025,
+            suppression_strength: 0.5,
+            start_on_boot: false,
+            output_filter_enabled: true,
+            echo_cancel_enabled: false,
+            dynamic_threshold_enabled: true,
+        };
+        
+        let json = serde_json::to_string(&original).unwrap();
+        let restored: AppConfig = serde_json::from_str(&json).unwrap();
+        
+        assert_eq!(original.gate_threshold, restored.gate_threshold);
+        assert_eq!(original.dynamic_threshold_enabled, restored.dynamic_threshold_enabled);
+        assert_eq!(original.output_filter_enabled, restored.output_filter_enabled);
+    }
+}

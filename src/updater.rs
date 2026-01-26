@@ -79,3 +79,55 @@ pub fn check_for_updates_async() -> std::sync::mpsc::Receiver<Option<UpdateInfo>
     
     rx
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use semver::Version;
+
+    #[test]
+    fn test_version_parsing_with_v_prefix() {
+        let tag = "v1.2.3";
+        let version_str = tag.trim_start_matches('v');
+        let version = Version::parse(version_str).unwrap();
+        assert_eq!(version.major, 1);
+        assert_eq!(version.minor, 2);
+        assert_eq!(version.patch, 3);
+    }
+
+    #[test]
+    fn test_version_parsing_without_prefix() {
+        let tag = "0.7.0";
+        let version = Version::parse(tag).unwrap();
+        assert_eq!(version.major, 0);
+        assert_eq!(version.minor, 7);
+        assert_eq!(version.patch, 0);
+    }
+
+    #[test]
+    fn test_version_comparison() {
+        let current = Version::parse("0.7.0").unwrap();
+        let newer = Version::parse("0.8.0").unwrap();
+        let older = Version::parse("0.6.0").unwrap();
+        
+        assert!(newer > current);
+        assert!(older < current);
+        assert!(current == Version::parse("0.7.0").unwrap());
+    }
+
+    #[test]
+    fn test_github_release_deserialization() {
+        let json = r#"{"tag_name":"v1.0.0","html_url":"https://example.com","body":"Release notes"}"#;
+        let release: GitHubRelease = serde_json::from_str(json).unwrap();
+        assert_eq!(release.tag_name, "v1.0.0");
+        assert_eq!(release.html_url, "https://example.com");
+        assert_eq!(release.body, Some("Release notes".to_string()));
+    }
+
+    #[test]
+    fn test_github_release_without_body() {
+        let json = r#"{"tag_name":"v1.0.0","html_url":"https://example.com"}"#;
+        let release: GitHubRelease = serde_json::from_str(json).unwrap();
+        assert!(release.body.is_none());
+    }
+}
