@@ -149,6 +149,171 @@ impl VoidMicApp {
         self.config.last_output = self.selected_output.clone();
         self.config.save();
     }
+
+    /// Renders the update banner at the top of the UI.
+    /// Returns true if the update was dismissed.
+    fn render_update_banner(&mut self, ui: &mut egui::Ui) -> bool {
+        let mut dismiss = false;
+        if let Some(ref update) = self.update_info {
+            let version = update.version.clone();
+            let url = update.download_url.clone();
+            ui.horizontal(|ui| {
+                ui.colored_label(egui::Color32::GOLD, format!("🎉 Update available: {}", version));
+                if ui.small_button("Download").clicked() {
+                    let _ = open::that(&url);
+                }
+                if ui.small_button("✕").clicked() {
+                    dismiss = true;
+                }
+            });
+            ui.separator();
+        }
+        dismiss
+    }
+
+    /// Renders the volume meter with dB scaling.
+    fn render_volume_meter(&self, ui: &mut egui::Ui) {
+        let volume = if let Some(engine) = &self.engine {
+            f32::from_bits(engine.volume_level.load(Ordering::Relaxed))
+        } else {
+            0.0
+        };
+        
+        let db = if volume > 0.0001 { 20.0 * volume.log10() } else { -60.0 };
+        let bar_len = ((db + 60.0) / 60.0).clamp(0.0, 1.0);
+        let color = if volume > self.config.gate_threshold { 
+            egui::Color32::GREEN 
+        } else { 
+            egui::Color32::DARK_GRAY 
+        };
+        
+        ui.add(egui::ProgressBar::new(bar_len).fill(color).text(format!("{:.1} dB", db)));
+        ui.label(egui::RichText::new("Green = Transmitting (Above Gate)").size(10.0));
+    }
+
+    /// Renders the device selection dropdowns.
+    fn render_device_selectors(&mut self, ui: &mut egui::Ui) {
+        egui::Grid::new("device_grid").striped(true).show(ui, |ui| {
+            ui.label("Microphone:");
+            egui::ComboBox::from_id_source("input_combo")
+                .selected_text(&self.selected_input)
+                .width(250.0)
+                .show_ui(ui, |ui| {
+                    let mut changed = false;
+                    for dev in &self.input_devices {
+                        if ui.selectable_value(&mut self.selected_input, dev.clone(), dev).changed() {
+                            changed = true;
+                        }
+                    }
+                    if changed { self.mark_config_dirty(); }
+                });
+            ui.end_row();
+
+            ui.label("Output Sink:");
+            egui::ComboBox::from_id_source("output_combo")
+                .selected_text(&self.selected_output)
+                .width(250.0)
+                .show_ui(ui, |ui| {
+                    let mut changed = false;
+                    for dev in &self.output_devices {
+                        if ui.selectable_value(&mut self.selected_output, dev.clone(), dev).changed() {
+                            changed = true;
+                        }
+                    }
+                    if changed { self.mark_config_dirty(); }
+                });
+            ui.end_row();
+        });
+    }
+
+    /// Renders the threshold and suppression controls.
+    fn render_threshold_controls(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            if ui.checkbox(&mut self.config.dynamic_threshold_enabled, "Auto-Gate").changed() {
+                self.mark_config_dirty();
+            }
+            
+            ui.add_enabled_ui(!self.config.dynamic_threshold_enabled, |ui| {
+                ui.label("Gate Threshold:");
+                let slider = egui::Slider::new(&mut self.config.gate_threshold, 0.005..=0.05)
+                    .text("")
+                    .fixed_decimals(3);
+                if ui.add(slider).changed() {
+                    self.mark_config_dirty();
+                }
+            });
+            
+            let calibrate_enabled = self.engine.is_some() && !self.is_calibrating && !self.config.dynamic_threshold_enabled;
+            if ui.add_enabled(calibrate_enabled, egui::Button::new("🎯 Calibrate")).clicked() {
+                if let Some(engine) = &self.engine {
+                    engine.calibration_mode.store(true, Ordering::Relaxed);
+                    self.is_calibrating = true;
+                    self.status_msg = "Calibrating... stay quiet for 3 seconds".to_string();
+                }
+            }
+        });
+        
+        ui.horizontal(|ui| {
+            ui.label("Suppression:");
+            let pct = (self.config.suppression_strength * 100.0) as i32;
+            let slider = egui::Slider::new(&mut self.config.suppression_strength, 0.0..=1.0)
+                .text(format!("{}%", pct))
+                .fixed_decimals(0);
+            if ui.add(slider).changed() {
+                self.mark_config_dirty();
+            }
+        });
+    }
+
+    /// Checks and handles calibration results.
+    fn check_calibration_result(&mut self) {
+        if self.is_calibrating {
+            if let Some(engine) = &self.engine {
+                if !engine.calibration_mode.load(Ordering::Relaxed) {
+                    let result = f32::from_bits(engine.calibration_result.load(Ordering::Relaxed));
+                    if result > 0.0 {
+                        self.config.gate_threshold = result;
+                        self.save_config_now();
+                        self.status_msg = format!("Calibrated! Threshold set to {:.3}", result);
+                    }
+                    self.is_calibrating = false;
+                }
+            }
+        }
+    }
+
+    /// Renders advanced features (output filter, echo cancellation).
+    fn render_advanced_features(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Advanced Features");
+        
+        ui.horizontal(|ui| {
+            if ui.checkbox(&mut self.config.output_filter_enabled, "Filter Output (Speaker Denoising)").changed() {
+                self.mark_config_dirty();
+            }
+            ui.label(egui::RichText::new("⚠️ ~100ms latency").size(10.0).color(egui::Color32::YELLOW));
+        });
+
+        ui.horizontal(|ui| {
+            if ui.checkbox(&mut self.config.echo_cancel_enabled, "Echo Cancellation").changed() {
+                self.mark_config_dirty();
+            }
+        });
+
+        if self.config.echo_cancel_enabled || self.config.output_filter_enabled {
+            ui.horizontal(|ui| {
+                ui.label("Reference Input (Monitor):");
+                egui::ComboBox::from_id_source("ref_combo")
+                    .selected_text(&self.selected_reference)
+                    .width(200.0)
+                    .show_ui(ui, |ui| {
+                        for dev in &self.input_devices {
+                            let _ = ui.selectable_value(&mut self.selected_reference, dev.clone(), dev);
+                        }
+                    });
+                ui.label(egui::RichText::new("ℹ️ Select speaker monitor").size(10.0));
+            });
+        }
+    }
 }
 
 impl eframe::App for VoidMicApp {
@@ -202,22 +367,7 @@ impl eframe::App for VoidMicApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             // Update banner at top
-            let mut dismiss_update = false;
-            if let Some(ref update) = self.update_info {
-                let version = update.version.clone();
-                let url = update.download_url.clone();
-                ui.horizontal(|ui| {
-                    ui.colored_label(egui::Color32::GOLD, format!("🎉 Update available: {}", version));
-                    if ui.small_button("Download").clicked() {
-                        let _ = open::that(&url);
-                    }
-                    if ui.small_button("✕").clicked() {
-                        dismiss_update = true;
-                    }
-                });
-                ui.separator();
-            }
-            if dismiss_update {
+            if self.render_update_banner(ui) {
                 self.update_info = None;
             }
             
@@ -226,157 +376,25 @@ impl eframe::App for VoidMicApp {
             ui.separator();
             ui.add_space(10.0);
 
-            // Meter with proper dB scaling
-            let volume = if let Some(engine) = &self.engine {
-                f32::from_bits(engine.volume_level.load(Ordering::Relaxed))
-            } else {
-                0.0
-            };
-            
-            // Convert to dB for better visualization: dB = 20 * log10(amplitude)
-            // Range: -60dB (silence) to 0dB (full scale)
-            let db = if volume > 0.0001 {
-                20.0 * volume.log10()
-            } else {
-                -60.0
-            };
-            
-            // Normalize -60dB to 0dB range into 0.0 to 1.0 for progress bar
-            let bar_len = ((db + 60.0) / 60.0).clamp(0.0, 1.0);
-            
-            let color = if volume > self.config.gate_threshold { egui::Color32::GREEN } else { egui::Color32::DARK_GRAY };
-            
-            ui.add(egui::ProgressBar::new(bar_len).fill(color).text(format!("{:.1} dB", db)));
-            ui.label(egui::RichText::new("Green = Transmitting (Above Gate)").size(10.0));
+            // Volume meter
+            self.render_volume_meter(ui);
 
             ui.add_space(20.0);
 
-            // Selectors
-            egui::Grid::new("device_grid").striped(true).show(ui, |ui| {
-                ui.label("Microphone:");
-                egui::ComboBox::from_id_source("input_combo")
-                    .selected_text(&self.selected_input)
-                    .width(250.0)
-                    .show_ui(ui, |ui| {
-                        let mut changed = false;
-                        for dev in &self.input_devices {
-                            if ui.selectable_value(&mut self.selected_input, dev.clone(), dev).changed() {
-                                changed = true;
-                            }
-                        }
-                        if changed { self.mark_config_dirty(); }
-                    });
-                ui.end_row();
-
-                ui.label("Output Sink:");
-                egui::ComboBox::from_id_source("output_combo")
-                    .selected_text(&self.selected_output)
-                    .width(250.0)
-                    .show_ui(ui, |ui| {
-                         let mut changed = false;
-                        for dev in &self.output_devices {
-                            if ui.selectable_value(&mut self.selected_output, dev.clone(), dev).changed() {
-                                changed = true;
-                            }
-                        }
-                        if changed { self.mark_config_dirty(); }
-                    });
-                ui.end_row();
-            });
+            // Device selectors
+            self.render_device_selectors(ui);
 
             ui.add_space(20.0);
 
-            // Threshold Controls
-            ui.horizontal(|ui| {
-                // Dynamic Threshold checkbox
-                if ui.checkbox(&mut self.config.dynamic_threshold_enabled, "Auto-Gate").changed() {
-                    self.mark_config_dirty();
-                }
-                
-                // Manual slider (disabled when dynamic is enabled)
-                ui.add_enabled_ui(!self.config.dynamic_threshold_enabled, |ui| {
-                    ui.label("Gate Threshold:");
-                    let slider = egui::Slider::new(&mut self.config.gate_threshold, 0.005..=0.05)
-                        .text("")
-                        .fixed_decimals(3);
-                    if ui.add(slider).changed() {
-                        self.mark_config_dirty();
-                    }
-                });
-                
-                let calibrate_enabled = self.engine.is_some() && !self.is_calibrating && !self.config.dynamic_threshold_enabled;
-                if ui.add_enabled(calibrate_enabled, egui::Button::new("🎯 Calibrate")).clicked() {
-                    if let Some(engine) = &self.engine {
-                        engine.calibration_mode.store(true, Ordering::Relaxed);
-                        self.is_calibrating = true;
-                        self.status_msg = "Calibrating... stay quiet for 3 seconds".to_string();
-                    }
-                }
-            });
-            
-            // Suppression Strength slider
-            ui.horizontal(|ui| {
-                ui.label("Suppression:");
-                let pct = (self.config.suppression_strength * 100.0) as i32;
-                let slider = egui::Slider::new(&mut self.config.suppression_strength, 0.0..=1.0)
-                    .text(format!("{}%", pct))
-                    .fixed_decimals(0);
-                if ui.add(slider).changed() {
-                    self.mark_config_dirty();
-                }
-            });
+            // Threshold and suppression controls
+            self.render_threshold_controls(ui);
 
             // Check calibration result
-            if self.is_calibrating {
-                if let Some(engine) = &self.engine {
-                    if !engine.calibration_mode.load(Ordering::Relaxed) {
-                        // Calibration finished
-                        let result = f32::from_bits(engine.calibration_result.load(Ordering::Relaxed));
-                        if result > 0.0 {
-                            self.config.gate_threshold = result;
-                            self.save_config_now();
-                            self.status_msg = format!("Calibrated! Threshold set to {:.3}", result);
-                        }
-                        self.is_calibrating = false;
-                    }
-                }
-            }
+            self.check_calibration_result();
 
             // Advanced Features
             ui.add_space(10.0);
-            ui.heading("Advanced Features");
-            
-            // Output Filter (Speaker Denoising)
-            ui.horizontal(|ui| {
-                 if ui.checkbox(&mut self.config.output_filter_enabled, "Filter Output (Speaker Denoising)").changed() {
-                     self.mark_config_dirty();
-                 }
-                 ui.label(egui::RichText::new("⚠️ ~100ms latency").size(10.0).color(egui::Color32::YELLOW));
-            });
-
-            // Echo Cancellation
-            ui.horizontal(|ui| {
-                 if ui.checkbox(&mut self.config.echo_cancel_enabled, "Echo Cancellation").changed() {
-                     self.mark_config_dirty();
-                 }
-            });
-
-            if self.config.echo_cancel_enabled || self.config.output_filter_enabled {
-                ui.horizontal(|ui| {
-                    ui.label("Reference Input (Monitor):");
-                    egui::ComboBox::from_id_source("ref_combo")
-                        .selected_text(&self.selected_reference)
-                        .width(200.0)
-                        .show_ui(ui, |ui| {
-                             for dev in &self.input_devices {
-                                 if ui.selectable_value(&mut self.selected_reference, dev.clone(), dev).changed() {
-                                     // No config persistence for this yet
-                                 }
-                             }
-                        });
-                    ui.label(egui::RichText::new("ℹ️ Select speaker monitor").size(10.0));
-                });
-            }
+            self.render_advanced_features(ui);
 
             ui.add_space(10.0);
 

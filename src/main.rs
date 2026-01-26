@@ -15,6 +15,7 @@ mod virtual_device;
 mod pulse_info;
 mod echo_cancel;
 mod constants;
+mod daemon;
 
 #[derive(Parser)]
 #[command(name = "voidmic")]
@@ -104,8 +105,13 @@ fn main() -> Result<()> {
                             .spawn();
                         
                         match child {
-                            Ok(_) => {
-                                println!("✓ VoidMic started in background");
+                            Ok(c) => {
+                                // Write PID file for the child process
+                                let child_pid = c.id();
+                                if let Err(e) = daemon::write_pid_file() {
+                                    eprintln!("Warning: Could not write PID file: {}", e);
+                                }
+                                println!("✓ VoidMic started in background (PID: {})", child_pid);
                                 println!("\n📢 Select '{}' as your microphone in applications", monitor);
                                 println!("\nTo stop: voidmic unload");
                             }
@@ -133,10 +139,16 @@ fn main() -> Result<()> {
         Some(Commands::Unload) => {
             #[cfg(target_os = "linux")]
             {
-                // Kill any running voidmic processes (except ourselves)
-                let _ = std::process::Command::new("pkill")
-                    .args(["-f", "voidmic run"])
-                    .output();
+                // Try graceful shutdown using PID file first
+                match daemon::stop_daemon() {
+                    Ok(_) => println!("✓ Daemon stopped gracefully"),
+                    Err(_) => {
+                        // Fallback: Kill any running voidmic processes
+                        let _ = std::process::Command::new("pkill")
+                            .args(["-f", "voidmic run"])
+                            .output();
+                    }
+                }
                 
                 // Destroy virtual sink
                 match virtual_device::destroy_virtual_sink(0) {

@@ -9,7 +9,7 @@ use std::thread;
 use std::time::Duration;
 use std::path::Path;
 use nnnoiseless::DenoiseState;
-use log::{info, warn, debug};
+use log::{info, warn};
 use crate::echo_cancel::EchoCanceller;
 use crate::constants::{SAMPLE_RATE, FRAME_SIZE};
 
