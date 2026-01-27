@@ -23,29 +23,41 @@ pub fn run_gui(model_path: PathBuf) -> eframe::Result<()> {
     // Load config early to determine if we should start minimized
     let config = AppConfig::load();
     let start_minimized = config.start_minimized;
+    let dark_mode = config.dark_mode;
+    
+    // Build viewport with saved position if available
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size([450.0, 450.0])
+        .with_resizable(false)
+        .with_visible(!start_minimized);
+    
+    if let (Some(x), Some(y)) = (config.window_x, config.window_y) {
+        viewport = viewport.with_position([x, y]);
+    }
     
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([450.0, 450.0])
-            .with_resizable(false)
-            .with_visible(!start_minimized),
+        viewport,
         ..Default::default()
     };
     eframe::run_native(
         "VoidMic",
         options,
         Box::new(move |cc| {
-            setup_custom_style(&cc.egui_ctx);
+            setup_custom_style(&cc.egui_ctx, dark_mode);
             Box::new(VoidMicApp::new_with_config(model_path, config))
         }),
     )
 }
 
-fn setup_custom_style(ctx: &egui::Context) {
-    let mut visuals = egui::Visuals::dark();
-    visuals.window_fill = egui::Color32::from_rgb(20, 20, 25);
-    visuals.panel_fill = egui::Color32::from_rgb(20, 20, 25);
-    ctx.set_visuals(visuals);
+fn setup_custom_style(ctx: &egui::Context, dark_mode: bool) {
+    if dark_mode {
+        let mut visuals = egui::Visuals::dark();
+        visuals.window_fill = egui::Color32::from_rgb(20, 20, 25);
+        visuals.panel_fill = egui::Color32::from_rgb(20, 20, 25);
+        ctx.set_visuals(visuals);
+    } else {
+        ctx.set_visuals(egui::Visuals::light());
+    }
 }
 
 struct VoidMicApp {
@@ -397,21 +409,14 @@ impl eframe::App for VoidMicApp {
         // Handle Close Request (Minimize to Tray)
         if ctx.input(|i| i.viewport().close_requested()) {
             if !self.is_quitting {
+                // Save window position before hiding
+                if let Some(pos) = ctx.input(|i| i.viewport().outer_rect).map(|r| r.min) {
+                    self.config.window_x = Some(pos.x);
+                    self.config.window_y = Some(pos.y);
+                    self.save_config_now();
+                }
+                
                 ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
-                // Cancel close by consuming the event? 
-                // eframe doesn't have a specific "cancel close" but if we don't propagate or if we set Visible(false),
-                // wait, close_requested means the OS sent a close signal.
-                // In eframe, we need to return `false` in `on_close_request` hook maybe?
-                // Or use `ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose)` if available?
-                // `CancelClose` is not a standard command in some versions of eframe/egui.
-                // However, we can use `frame.close()` only if we want to close.
-                // Actually, `close_requested` is just info. We need to tell the viewport what to do.
-                // In `eframe` 0.26, simply *not* calling close, and setting visible false works?
-                // NO, we need to instruct the viewport to IGNORE the close.
-                // `ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose)` exists in newer eframe.
-                // Let's assume we can just set visibility to false.
-                // BUT if we don't handle it, the window might close.
-                // Let's try `ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose)` which is standard for "prevent default close".
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             }
         }
@@ -626,6 +631,22 @@ impl eframe::App for VoidMicApp {
                  if ui.checkbox(&mut auto_start, "Auto-Start Processing").changed() {
                      self.config.auto_start_processing = auto_start;
                      self.save_config_now();
+                 }
+                 
+                 // Dark Mode checkbox
+                 let mut dark_mode = self.config.dark_mode;
+                 if ui.checkbox(&mut dark_mode, "Dark Mode").changed() {
+                     self.config.dark_mode = dark_mode;
+                     self.save_config_now();
+                     // Apply theme change immediately
+                     if dark_mode {
+                         let mut visuals = egui::Visuals::dark();
+                         visuals.window_fill = egui::Color32::from_rgb(20, 20, 25);
+                         visuals.panel_fill = egui::Color32::from_rgb(20, 20, 25);
+                         ui.ctx().set_visuals(visuals);
+                     } else {
+                         ui.ctx().set_visuals(egui::Visuals::light());
+                     }
                  }
             });
         });

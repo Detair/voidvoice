@@ -137,3 +137,56 @@ pub fn virtual_sink_exists() -> bool {
 pub fn get_monitor_source_name() -> String {
     format!("{}.monitor", VIRTUAL_SINK_NAME)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_virtual_sink_name_constant() {
+        assert_eq!(VIRTUAL_SINK_NAME, "VoidMic_Clean");
+        assert!(!VIRTUAL_SINK_NAME.is_empty());
+        assert!(!VIRTUAL_SINK_NAME.contains(' ')); // No spaces for pactl compatibility
+    }
+
+    #[test]
+    fn test_monitor_source_name_format() {
+        let monitor = get_monitor_source_name();
+        assert_eq!(monitor, "VoidMic_Clean.monitor");
+        assert!(monitor.ends_with(".monitor"));
+        assert!(monitor.starts_with(VIRTUAL_SINK_NAME));
+    }
+
+    #[test]
+    fn test_virtual_device_struct_construction() {
+        let device = VirtualDevice {
+            module_id: 42,
+            sink_name: "test_sink".to_string(),
+        };
+        assert_eq!(device.module_id, 42);
+        assert_eq!(device.sink_name, "test_sink");
+    }
+
+    #[test]
+    fn test_virtual_device_clone() {
+        let device = VirtualDevice {
+            module_id: 123,
+            sink_name: VIRTUAL_SINK_NAME.to_string(),
+        };
+        let cloned = device.clone();
+        assert_eq!(cloned.module_id, device.module_id);
+        assert_eq!(cloned.sink_name, device.sink_name);
+    }
+
+    #[test]
+    fn test_virtual_device_debug() {
+        let device = VirtualDevice {
+            module_id: 1,
+            sink_name: "test".to_string(),
+        };
+        let debug_str = format!("{:?}", device);
+        assert!(debug_str.contains("VirtualDevice"));
+        assert!(debug_str.contains("module_id"));
+        assert!(debug_str.contains("sink_name"));
+    }
+}

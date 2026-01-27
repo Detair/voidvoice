@@ -24,6 +24,12 @@ pub struct AppConfig {
     pub start_minimized: bool,
     #[serde(default)]
     pub auto_start_processing: bool,
+    #[serde(default)]
+    pub window_x: Option<f32>,
+    #[serde(default)]
+    pub window_y: Option<f32>,
+    #[serde(default = "default_dark_mode")]
+    pub dark_mode: bool,
 }
 
 fn default_gate_threshold() -> f32 {
@@ -32,6 +38,10 @@ fn default_gate_threshold() -> f32 {
 
 fn default_suppression_strength() -> f32 {
     1.0
+}
+
+fn default_dark_mode() -> bool {
+    true
 }
 
 impl Default for AppConfig {
@@ -47,6 +57,9 @@ impl Default for AppConfig {
             dynamic_threshold_enabled: false,
             start_minimized: false,
             auto_start_processing: false,
+            window_x: None,
+            window_y: None,
+            dark_mode: true,
         }
     }
 }
@@ -107,6 +120,11 @@ mod tests {
             output_filter_enabled: false,
             echo_cancel_enabled: true,
             dynamic_threshold_enabled: true,
+            start_minimized: false,
+            auto_start_processing: false,
+            window_x: None,
+            window_y: None,
+            dark_mode: true,
         };
         
         let json = serde_json::to_string(&config).unwrap();
@@ -137,6 +155,11 @@ mod tests {
             output_filter_enabled: true,
             echo_cancel_enabled: false,
             dynamic_threshold_enabled: true,
+            start_minimized: true,
+            auto_start_processing: true,
+            window_x: Some(100.0),
+            window_y: Some(200.0),
+            dark_mode: false,
         };
         
         let json = serde_json::to_string(&original).unwrap();
