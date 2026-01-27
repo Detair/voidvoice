@@ -16,10 +16,13 @@ It uses a **Hybrid Engine**:
 
 - **Hybrid Engine**: RNNoise + Smart Gate + AEC.
 - **Echo Cancellation**: Play without headphones using WebRTC AEC3.
+- **System Tray**: Minimize to tray, toggle microphone processing globally.
+- **Auto-Start**: Start minimized and processing automatically on launch.
 - **Output Filtering**: Denoise incoming audio (like Discord calls) before it hits your speakers.
-- **Daemon Mode**: Run as a background process (`voidmic load`) without the GUI.
+- **Process Management**: Daemon mode (`voidmic load`) or headless server mode.
 - **Auto Virtual Sink**: Automatically creates virtual devices on Linux.
 - **Visual Meter**: Real-time feedback on gate status.
+- **Themes**: Dark and Light mode support.
 - **Cross-Platform**: Linux, Windows, macOS.
 
 ## 🗺️ Roadmap
@@ -74,9 +77,20 @@ cargo build --release --no-default-features
 
 ### GUI
 1.  **Select Devices**: Mic as Input, Virtual Sink as Output.
-2.  **Advanced Features**:
+2.  **Settings & Polish**:
+    *   **Auto-Start Processing**: Start noise reduction immediately on launch.
+    *   **Start Minimized**: Launch directly to the system tray.
+    *   **Dark Mode**: Toggle between dark and light themes.
+3.  **Advanced Features**:
     *   **Filter Output**: Check this to denoise what you hear.
     *   **Echo Cancellation**: Check this if using speakers. Select your "Speaker Monitor" as the reference.
+
+### System Tray
+- **Left Click**: Open main window.
+- **Right Click Menu**:
+    *   **Show/Hide**: Toggle window visibility.
+    *   **Enable/Disable**: Quick toggle for microphone processing.
+    *   **Quit**: Exit application fully.
 
 ### Daemon (NoiseTorch-like)
 ```bash
