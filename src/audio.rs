@@ -1,25 +1,22 @@
+use crate::constants::{FRAME_SIZE, SAMPLE_RATE};
+use crate::echo_cancel::EchoCanceller;
 use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use ringbuf::traits::{Consumer, Producer, Split, Observer};
+use log::{info, warn};
+use nnnoiseless::DenoiseState;
+use ringbuf::traits::{Consumer, Observer, Producer, Split};
 use ringbuf::HeapRb;
 use std::collections::VecDeque;
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use std::path::Path;
-use nnnoiseless::DenoiseState;
-use log::{info, warn};
-use crate::echo_cancel::EchoCanceller;
-use crate::constants::{SAMPLE_RATE, FRAME_SIZE};
-
-
-
 
 // Gate timing constants (all in milliseconds)
-const ATTACK_MS: u32 = 5;      // Fast attack to avoid clipping first syllable
-const RELEASE_MS: u32 = 200;   // Hold gate open 200ms after speech stops (natural pauses)
-const FADE_MS: u32 = 10;       // Fade duration to eliminate clicks/pops
+const ATTACK_MS: u32 = 5; // Fast attack to avoid clipping first syllable
+const RELEASE_MS: u32 = 200; // Hold gate open 200ms after speech stops (natural pauses)
+const FADE_MS: u32 = 10; // Fade duration to eliminate clicks/pops
 
 /// Tracks minimum RMS over a sliding window to estimate noise floor.
 struct NoiseFloorTracker {
@@ -38,7 +35,7 @@ impl NoiseFloorTracker {
             current_floor: 0.01, // Initial estimate
         }
     }
-    
+
     fn update(&mut self, rms: f32) {
         self.window.push_back(rms);
         if self.window.len() > self.window_size {
@@ -52,14 +49,14 @@ impl NoiseFloorTracker {
             self.current_floor = sorted[idx];
         }
     }
-    
+
     fn floor(&self) -> f32 {
         self.current_floor
     }
 }
 
 /// Audio processing engine that combines RNNoise denoising with a smart noise gate.
-/// 
+///
 /// The engine runs in a separate thread and processes audio in real-time using:
 /// 1. RNNoise for steady background noise removal
 /// 2. Smart gate with attack/release for transient noise suppression
@@ -75,42 +72,51 @@ pub struct AudioEngine {
 
 impl AudioEngine {
     /// Starts the audio processing engine.
-    /// 
+    ///
     /// # Arguments
     /// * `input_name` - Name of the input device ("default" for system default)
     /// * `output_name` - Name of the output device ("default" for system default)
     /// * `_model_dir` - Unused (kept for API compatibility; RNNoise weights are embedded)
-    /// 
+    ///
     /// # Returns
     /// Result containing the AudioEngine instance or an error
-    /// 
+    ///
     /// # Example
     /// ```no_run
     /// let engine = AudioEngine::start("default", "VoidMic_Clean", Path::new("."), 0.015, 1.0, false, None)?;
     /// ```
+    #[allow(clippy::too_many_arguments)]
     pub fn start(
-        input_name: &str, 
-        output_name: &str, 
-        _model_dir: &Path, 
-        gate_threshold: f32, 
+        input_name: &str,
+        output_name: &str,
+        _model_dir: &Path,
+        gate_threshold: f32,
         suppression_strength: f32,
         echo_cancel_enabled: bool,
         reference_device_name: Option<&str>,
-        dynamic_threshold_enabled: bool
+        dynamic_threshold_enabled: bool,
     ) -> Result<Self> {
         let host = cpal::default_host();
         info!("Audio host: {}", host.id().name());
-        
+
         let input_device = if input_name == "default" {
             host.default_input_device()
-                .context("No default input device found. Please check your audio settings.")?    
+                .context("No default input device found. Please check your audio settings.")?
         } else {
             host.input_devices()
                 .context("Failed to enumerate input devices")?
                 .find(|d| d.name().ok().as_deref() == Some(input_name))
-                .with_context(|| format!("Input device '{}' not found. Run 'voidmic list' to see available devices.", input_name))?
+                .with_context(|| {
+                    format!(
+                        "Input device '{}' not found. Run 'voidmic list' to see available devices.",
+                        input_name
+                    )
+                })?
         };
-        info!("Using input device: {}", input_device.name().unwrap_or_default());
+        info!(
+            "Using input device: {}",
+            input_device.name().unwrap_or_default()
+        );
 
         let output_device = if output_name == "default" {
             host.default_output_device()
@@ -121,7 +127,10 @@ impl AudioEngine {
                 .find(|d| d.name().ok().as_deref() == Some(output_name))
                 .with_context(|| format!("Output device '{}' not found. Run 'voidmic list' to see available devices.", output_name))?
         };
-        info!("Using output device: {}", output_device.name().unwrap_or_default());
+        info!(
+            "Using output device: {}",
+            output_device.name().unwrap_or_default()
+        );
 
         let config = cpal::StreamConfig {
             channels: 1,
@@ -132,7 +141,7 @@ impl AudioEngine {
         // Use 100ms buffers for low latency (critical for gaming)
         // 4800 samples = 100ms at 48kHz
         let buffer_size = (SAMPLE_RATE as usize) / 10;
-        
+
         let rb_in = HeapRb::<f32>::new(buffer_size);
         let (mut prod_in, mut cons_in) = rb_in.split();
 
@@ -148,7 +157,6 @@ impl AudioEngine {
             (None, None)
         };
 
-
         let input_stream = input_device.build_input_stream(
             &config,
             move |data: &[f32], _| {
@@ -163,55 +171,61 @@ impl AudioEngine {
             move |data: &mut [f32], _| {
                 let read = cons_out.pop_slice(data);
                 if read < data.len() {
-                   for i in read..data.len() {
-                       data[i] = 0.0;
-                   }
+                    for sample in data.iter_mut().skip(read) {
+                        *sample = 0.0;
+                    }
                 }
             },
             |err| warn!("Output stream error: {}", err),
             None,
         )?;
-        
+
         let _reference_stream = if echo_cancel_enabled {
             // Setup reference stream (input from speaker monitor)
             let ref_name = reference_device_name.unwrap_or("default");
-            
+
             // Try to find device
             let ref_device = if ref_name == "default" {
-                 // Try to find default input? No.
-                 // We require explicit selection or rely on system default input which is likely Mic.
-                 // If echo cancel is enabled but no ref device, we try to capture default output monitor.
-                 // On PulseAudio, this is tricky via cpal.
-                 // For now, we assume user selects the monitor as an input device.
-                 host.input_devices()?.find(|d| d.name().ok().as_deref() == Some(ref_name))
+                // Try to find default input? No.
+                // We require explicit selection or rely on system default input which is likely Mic.
+                // If echo cancel is enabled but no ref device, we try to capture default output monitor.
+                // On PulseAudio, this is tricky via cpal.
+                // For now, we assume user selects the monitor as an input device.
+                host.input_devices()?
+                    .find(|d| d.name().ok().as_deref() == Some(ref_name))
             } else {
-                 host.input_devices()?.find(|d| d.name().ok().as_deref() == Some(ref_name))
+                host.input_devices()?
+                    .find(|d| d.name().ok().as_deref() == Some(ref_name))
             };
-            
+
             if let Some(device) = ref_device {
-                let stream = device.build_input_stream(
-                    &config,
-                    move |data: &[f32], _| {
-                         if let Some(prod) = &mut prod_ref {
-                             let _ = prod.push_slice(data);
-                         }
-                    },
-                    |err| warn!("Reference input error: {}", err),
-                    None,
-                ).ok();
+                let stream = device
+                    .build_input_stream(
+                        &config,
+                        move |data: &[f32], _| {
+                            if let Some(prod) = &mut prod_ref {
+                                let _ = prod.push_slice(data);
+                            }
+                        },
+                        |err| warn!("Reference input error: {}", err),
+                        None,
+                    )
+                    .ok();
                 stream
             } else {
-                warn!("Reference device '{}' not found for echo cancellation", ref_name);
+                warn!(
+                    "Reference device '{}' not found for echo cancellation",
+                    ref_name
+                );
                 None
             }
         } else {
             None
         };
-        
-        if let Some(stream) = &_reference_stream {
-             stream.play()?;
-        }
 
+        if let Some(stream) = &_reference_stream {
+            stream.play()?;
+        }
 
         let is_running = Arc::new(AtomicBool::new(true));
         let run_flag = is_running.clone();
@@ -225,28 +239,28 @@ impl AudioEngine {
         thread::spawn(move || {
             let mut denoise = DenoiseState::new();
             let mut echo_canceller = if echo_cancel_enabled {
-                 Some(EchoCanceller::new())
+                Some(EchoCanceller::new())
             } else {
-                 None
+                None
             };
-            
+
             let mut input_frame = [0.0f32; FRAME_SIZE];
             let mut output_frame = [0.0f32; FRAME_SIZE];
-            
+
             // Gate State Machine
             let mut gate_open = false;
-            let mut samples_since_close = 0u32;  // For attack time
-            let mut samples_since_open = 0u32;   // For release time
-            let mut fade_position = 0u32;        // For smooth fade-out
-            
+            let mut samples_since_close = 0u32; // For attack time
+            let mut samples_since_open = 0u32; // For release time
+            let mut fade_position = 0u32; // For smooth fade-out
+
             // Calibration state
             let mut calibration_samples: Vec<f32> = Vec::new();
             let calibration_duration_samples = SAMPLE_RATE * 3; // 3 seconds
-            
+
             let attack_samples = (SAMPLE_RATE / 1000) * ATTACK_MS;
             let release_samples = (SAMPLE_RATE / 1000) * RELEASE_MS;
             let fade_samples = (SAMPLE_RATE / 1000) * FADE_MS;
-            
+
             // Noise floor tracker for dynamic threshold
             let mut noise_floor_tracker = NoiseFloorTracker::new(3.0); // 3 second window
 
@@ -254,17 +268,17 @@ impl AudioEngine {
                 if cons_in.occupied_len() >= FRAME_SIZE {
                     cons_in.pop_slice(&mut input_frame);
 
-                     // 1. Echo Cancellation
+                    // 1. Echo Cancellation
                     if let (Some(cons), Some(aec)) = (&mut cons_ref, &mut echo_canceller) {
                         // We need reference samples to match input frame
                         if cons.occupied_len() >= FRAME_SIZE {
-                             // Read reference frame
-                             let mut ref_frame = [0.0f32; FRAME_SIZE];
-                             cons.pop_slice(&mut ref_frame);
-                             
-                             // Process through AEC
-                             let processed = aec.process_frame(&input_frame, &ref_frame);
-                             input_frame.copy_from_slice(&processed);
+                            // Read reference frame
+                            let mut ref_frame = [0.0f32; FRAME_SIZE];
+                            cons.pop_slice(&mut ref_frame);
+
+                            // Process through AEC
+                            let processed = aec.process_frame(&input_frame, &ref_frame);
+                            input_frame.copy_from_slice(&processed);
                         } else {
                             // Underrun
                         }
@@ -272,14 +286,14 @@ impl AudioEngine {
 
                     // 2. Denoise (RNNoise)
                     denoise.process_frame(&mut output_frame, &input_frame);
-                    
+
                     // 1b. Blend raw and denoised based on suppression strength
                     // strength=1.0 means full suppression, strength=0.0 means raw audio
                     for i in 0..FRAME_SIZE {
-                        output_frame[i] = input_frame[i] * (1.0 - suppression_strength) 
-                                        + output_frame[i] * suppression_strength;
+                        output_frame[i] = input_frame[i] * (1.0 - suppression_strength)
+                            + output_frame[i] * suppression_strength;
                     }
-                    
+
                     // 2. Smart Gate Logic with Attack/Release
                     // Calculate RMS of the *denoised* signal
                     let sum: f32 = output_frame.iter().map(|x| x * x).sum();
@@ -289,9 +303,12 @@ impl AudioEngine {
                     // Calibration mode: collect RMS samples
                     if calibration_mode_reader.load(Ordering::Relaxed) {
                         calibration_samples.push(rms);
-                        if calibration_samples.len() >= (calibration_duration_samples / FRAME_SIZE as u32) as usize {
+                        if calibration_samples.len()
+                            >= (calibration_duration_samples / FRAME_SIZE as u32) as usize
+                        {
                             // Calculate suggested threshold: max RMS + 20% margin
-                            let max_rms = calibration_samples.iter().cloned().fold(0.0f32, f32::max);
+                            let max_rms =
+                                calibration_samples.iter().cloned().fold(0.0f32, f32::max);
                             let suggested = (max_rms * 1.2).max(0.005); // minimum 0.005
                             calibration_result_writer.store(suggested.to_bits(), Ordering::Relaxed);
                             calibration_mode_reader.store(false, Ordering::Relaxed);
@@ -308,10 +325,10 @@ impl AudioEngine {
                     } else {
                         gate_threshold
                     };
-                    
+
                     if rms > effective_threshold {
                         samples_since_close += FRAME_SIZE as u32;
-                        
+
                         // Open gate after attack time (prevents clipping first syllable)
                         if samples_since_close >= attack_samples {
                             gate_open = true;
@@ -320,10 +337,10 @@ impl AudioEngine {
                         }
                     } else {
                         samples_since_close = 0;
-                        
+
                         if gate_open {
                             samples_since_open += FRAME_SIZE as u32;
-                            
+
                             // Close gate after release time
                             if samples_since_open > release_samples {
                                 gate_open = false;
@@ -334,7 +351,7 @@ impl AudioEngine {
                     // 3. Apply Gate with Smooth Fade-Out
                     if !gate_open {
                         // Smooth fade-out to eliminate clicks/pops
-                        for (_i, sample) in output_frame.iter_mut().enumerate() {
+                        for sample in output_frame.iter_mut() {
                             if fade_position < fade_samples {
                                 // Linear fade (could use cosine for smoother curve)
                                 let fade_gain = 1.0 - (fade_position as f32 / fade_samples as f32);
@@ -364,7 +381,7 @@ impl AudioEngine {
         Ok(Self {
             _input_stream: input_stream,
             _output_stream: output_stream,
-             _reference_stream,
+            _reference_stream,
             is_running,
             volume_level,
             calibration_mode,
@@ -380,7 +397,7 @@ impl Drop for AudioEngine {
 }
 
 /// Output filter engine for speaker/headphone denoising.
-/// 
+///
 /// Captures audio from a source (e.g., application output) and applies RNNoise
 /// before sending to the actual speakers. Introduces ~100ms latency.
 pub struct OutputFilterEngine {
@@ -391,26 +408,30 @@ pub struct OutputFilterEngine {
 
 impl OutputFilterEngine {
     /// Starts the output filter engine.
-    /// 
+    ///
     /// # Arguments
     /// * `source_name` - Name of the source to filter (e.g., application output monitor)
     /// * `sink_name` - Name of the sink to output filtered audio to (e.g., speakers)
     /// * `suppression_strength` - Strength of noise suppression (0.0-1.0)
     pub fn start(source_name: &str, sink_name: &str, suppression_strength: f32) -> Result<Self> {
         let host = cpal::default_host();
-        
+
         // Use monitor source as input (captures what apps are playing)
         let input_device = if source_name == "default" {
-            host.default_input_device().context("No default input found")?
+            host.default_input_device()
+                .context("No default input found")?
         } else {
-            host.input_devices()?.find(|d| d.name().ok().as_deref() == Some(source_name))
+            host.input_devices()?
+                .find(|d| d.name().ok().as_deref() == Some(source_name))
                 .context("Source device not found")?
         };
 
         let output_device = if sink_name == "default" {
-            host.default_output_device().context("No default output found")?
+            host.default_output_device()
+                .context("No default output found")?
         } else {
-            host.output_devices()?.find(|d| d.name().ok().as_deref() == Some(sink_name))
+            host.output_devices()?
+                .find(|d| d.name().ok().as_deref() == Some(sink_name))
                 .context("Output device not found")?
         };
 
@@ -422,7 +443,7 @@ impl OutputFilterEngine {
 
         // Use larger buffer for output filtering (100ms acceptable latency)
         let buffer_size = (SAMPLE_RATE as usize) / 5; // 200ms buffer
-        
+
         let rb_in = HeapRb::<f32>::new(buffer_size);
         let (mut prod_in, mut cons_in) = rb_in.split();
 
@@ -443,9 +464,9 @@ impl OutputFilterEngine {
             move |data: &mut [f32], _| {
                 let read = cons_out.pop_slice(data);
                 if read < data.len() {
-                   for i in read..data.len() {
-                       data[i] = 0.0;
-                   }
+                    for sample in data.iter_mut().skip(read) {
+                        *sample = 0.0;
+                    }
                 }
             },
             |err| warn!("Output filter output error: {}", err),
@@ -466,11 +487,11 @@ impl OutputFilterEngine {
 
                     // Denoise with RNNoise
                     denoise.process_frame(&mut output_frame, &input_frame);
-                    
+
                     // Blend based on suppression strength
                     for i in 0..FRAME_SIZE {
-                        output_frame[i] = input_frame[i] * (1.0 - suppression_strength) 
-                                        + output_frame[i] * suppression_strength;
+                        output_frame[i] = input_frame[i] * (1.0 - suppression_strength)
+                            + output_frame[i] * suppression_strength;
                     }
 
                     while prod_out.vacant_len() < FRAME_SIZE {
@@ -518,14 +539,22 @@ mod tests {
             tracker.update(0.005);
         }
         let floor = tracker.floor();
-        assert!(floor >= 0.004 && floor <= 0.006, "Floor should be ~0.005, got {}", floor);
+        assert!(
+            floor >= 0.004 && floor <= 0.006,
+            "Floor should be ~0.005, got {}",
+            floor
+        );
     }
 
     #[test]
     fn test_noise_floor_ignores_speech_spikes() {
         let mut tracker = NoiseFloorTracker::new(1.0);
-        for _ in 0..90 { tracker.update(0.01); }
-        for _ in 0..10 { tracker.update(0.15); }
+        for _ in 0..90 {
+            tracker.update(0.01);
+        }
+        for _ in 0..10 {
+            tracker.update(0.15);
+        }
         let floor = tracker.floor();
         assert!(floor < 0.05, "Floor should ignore speech, got {}", floor);
     }

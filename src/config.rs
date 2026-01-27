@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use directories::ProjectDirs;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
@@ -91,8 +91,7 @@ impl AppConfig {
 }
 
 fn config_path() -> Option<PathBuf> {
-    ProjectDirs::from("com", "voidmic", "voidmic")
-        .map(|dirs| dirs.config_dir().join("config.json"))
+    ProjectDirs::from("com", "voidmic", "voidmic").map(|dirs| dirs.config_dir().join("config.json"))
 }
 
 #[cfg(test)]
@@ -126,7 +125,7 @@ mod tests {
             window_y: None,
             dark_mode: true,
         };
-        
+
         let json = serde_json::to_string(&config).unwrap();
         assert!(json.contains("\"gate_threshold\":0.02"));
         assert!(json.contains("\"echo_cancel_enabled\":true"));
@@ -137,7 +136,7 @@ mod tests {
         // Minimal JSON - should fill in defaults
         let json = r#"{"last_input":"Mic","last_output":"Out"}"#;
         let config: AppConfig = serde_json::from_str(json).unwrap();
-        
+
         assert_eq!(config.last_input, "Mic");
         assert_eq!(config.gate_threshold, 0.015); // Default
         assert_eq!(config.suppression_strength, 1.0); // Default
@@ -161,12 +160,18 @@ mod tests {
             window_y: Some(200.0),
             dark_mode: false,
         };
-        
+
         let json = serde_json::to_string(&original).unwrap();
         let restored: AppConfig = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(original.gate_threshold, restored.gate_threshold);
-        assert_eq!(original.dynamic_threshold_enabled, restored.dynamic_threshold_enabled);
-        assert_eq!(original.output_filter_enabled, restored.output_filter_enabled);
+        assert_eq!(
+            original.dynamic_threshold_enabled,
+            restored.dynamic_threshold_enabled
+        );
+        assert_eq!(
+            original.output_filter_enabled,
+            restored.output_filter_enabled
+        );
     }
 }

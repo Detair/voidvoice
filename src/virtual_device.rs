@@ -28,7 +28,7 @@ pub fn create_virtual_sink() -> Result<VirtualDevice, String> {
             .args(["list", "short", "sinks"])
             .output()
             .map_err(|e| format!("Failed to list sinks: {}", e))?;
-        
+
         let output = String::from_utf8_lossy(&check.stdout);
         if output.contains(VIRTUAL_SINK_NAME) {
             // Already exists, try to find module ID
@@ -41,7 +41,8 @@ pub fn create_virtual_sink() -> Result<VirtualDevice, String> {
         // Create new null-sink
         let result = Command::new("pactl")
             .args([
-                "load-module", "module-null-sink",
+                "load-module",
+                "module-null-sink",
                 &format!("sink_name={}", VIRTUAL_SINK_NAME),
                 &format!("sink_properties=device.description={}", VIRTUAL_SINK_NAME),
             ])
@@ -53,7 +54,7 @@ pub fn create_virtual_sink() -> Result<VirtualDevice, String> {
                 .trim()
                 .parse()
                 .unwrap_or(0);
-            
+
             Ok(VirtualDevice {
                 module_id,
                 sink_name: VIRTUAL_SINK_NAME.to_string(),
@@ -73,7 +74,10 @@ pub fn create_virtual_sink() -> Result<VirtualDevice, String> {
     #[cfg(target_os = "macos")]
     {
         // On macOS, we can't auto-create. Return instruction to install BlackHole.
-        Err("macOS requires BlackHole. Please install from github.com/ExistentialAudio/BlackHole".to_string())
+        Err(
+            "macOS requires BlackHole. Please install from github.com/ExistentialAudio/BlackHole"
+                .to_string(),
+        )
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
@@ -93,7 +97,7 @@ pub fn destroy_virtual_sink(module_id: u32) -> Result<(), String> {
                 .output();
             return Ok(());
         }
-        
+
         let result = Command::new("pactl")
             .args(["unload-module", &module_id.to_string()])
             .output()

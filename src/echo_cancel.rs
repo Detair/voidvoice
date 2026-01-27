@@ -2,9 +2,8 @@
 //!
 //! Uses the aec3 crate (Rust port of WebRTC AEC3) for acoustic echo cancellation.
 
-use aec3::voip::VoipAec3;
 use crate::constants::SAMPLE_RATE;
-
+use aec3::voip::VoipAec3;
 
 /// Echo canceller wrapper
 pub struct EchoCanceller {
@@ -22,26 +21,29 @@ impl EchoCanceller {
     }
 
     /// Processes a frame of audio with echo cancellation.
-    /// 
+    ///
     /// # Arguments
     /// * `mic_input` - The microphone input (may contain echo). Expected length: 480 (10ms at 48kHz)
     /// * `speaker_ref` - The reference signal from speakers. Expected length: 480
-    /// 
+    ///
     /// # Returns
     /// The echo-cancelled microphone signal
     pub fn process_frame(&mut self, mic_input: &[f32], speaker_ref: &[f32]) -> Vec<f32> {
         let mut out = vec![0.0; mic_input.len()];
-        
+
         // Process with AEC3
         // level_change = false (we don't track volume changes yet)
-        if let Err(e) = self.aec.process(mic_input, Some(speaker_ref), false, &mut out) {
+        if let Err(e) = self
+            .aec
+            .process(mic_input, Some(speaker_ref), false, &mut out)
+        {
             eprintln!("AEC error: {:?}", e);
             return mic_input.to_vec(); // Fallback to raw input
         }
-        
+
         out
     }
-    
+
     /// Resets the echo canceller state.
     #[allow(dead_code)]
     pub fn reset(&mut self) {

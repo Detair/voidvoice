@@ -6,16 +6,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 mod audio;
-#[cfg(feature = "gui")]
-mod gui;
-mod config;
 mod autostart;
-mod updater;
-mod virtual_device;
-mod pulse_info;
-mod echo_cancel;
+mod config;
 mod constants;
 mod daemon;
+mod echo_cancel;
+#[cfg(feature = "gui")]
+mod gui;
+mod pulse_info;
+mod updater;
+mod virtual_device;
 
 #[derive(Parser)]
 #[command(name = "voidmic")]
@@ -50,9 +50,9 @@ enum Commands {
 
 fn main() -> Result<()> {
     env_logger::init();
-    
+
     // RNNoise weights are embedded in the nnnoiseless crate
-    let model_path = PathBuf::from("Embedded"); 
+    let model_path = PathBuf::from("Embedded");
 
     let cli = Cli::parse();
 
@@ -61,22 +61,31 @@ fn main() -> Result<()> {
             list_devices()?;
         }
         Some(Commands::Run { input, output }) => {
-            let _engine = audio::AudioEngine::start(&input, &output, &model_path, 0.015, 1.0, false, None, false)?;
+            let _engine = audio::AudioEngine::start(
+                &input,
+                &output,
+                &model_path,
+                0.015,
+                1.0,
+                false,
+                None,
+                false,
+            )?;
             println!("VoidMic Active (Hybrid). Press Ctrl+C to stop.");
-            
+
             // Graceful shutdown handling
             let running = Arc::new(AtomicBool::new(true));
             let r = running.clone();
-            
+
             ctrlc::set_handler(move || {
                 println!("\nShutting down gracefully...");
                 r.store(false, Ordering::Relaxed);
             })?;
-            
+
             while running.load(Ordering::Relaxed) {
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
-            
+
             println!("VoidMic stopped.");
         }
         Some(Commands::Load { input }) => {
@@ -84,26 +93,29 @@ fn main() -> Result<()> {
             #[cfg(target_os = "linux")]
             {
                 use std::process::Command;
-                
+
                 // Create virtual sink
                 match virtual_device::create_virtual_sink() {
                     Ok(device) => {
-                        println!("✓ Virtual sink '{}' created", virtual_device::VIRTUAL_SINK_NAME);
-                        
+                        println!(
+                            "✓ Virtual sink '{}' created",
+                            virtual_device::VIRTUAL_SINK_NAME
+                        );
+
                         // Get the monitor source name (this is what apps should use as input)
                         let monitor = virtual_device::get_monitor_source_name();
-                        
+
                         // Spawn background process
                         let exe = std::env::current_exe()?;
                         let output_sink = virtual_device::VIRTUAL_SINK_NAME.to_string();
-                        
+
                         let child = Command::new(&exe)
                             .args(["run", "-i", &input, "-o", &output_sink])
                             .stdin(std::process::Stdio::null())
                             .stdout(std::process::Stdio::null())
                             .stderr(std::process::Stdio::null())
                             .spawn();
-                        
+
                         match child {
                             Ok(c) => {
                                 // Write PID file for the child process
@@ -112,7 +124,10 @@ fn main() -> Result<()> {
                                     eprintln!("Warning: Could not write PID file: {}", e);
                                 }
                                 println!("✓ VoidMic started in background (PID: {})", child_pid);
-                                println!("\n📢 Select '{}' as your microphone in applications", monitor);
+                                println!(
+                                    "\n📢 Select '{}' as your microphone in applications",
+                                    monitor
+                                );
                                 println!("\nTo stop: voidmic unload");
                             }
                             Err(e) => {
@@ -128,7 +143,7 @@ fn main() -> Result<()> {
                     }
                 }
             }
-            
+
             #[cfg(not(target_os = "linux"))]
             {
                 let _ = input;
@@ -149,14 +164,14 @@ fn main() -> Result<()> {
                             .output();
                     }
                 }
-                
+
                 // Destroy virtual sink
                 match virtual_device::destroy_virtual_sink(0) {
                     Ok(_) => println!("✓ VoidMic unloaded"),
                     Err(e) => eprintln!("Warning: {}", e),
                 }
             }
-            
+
             #[cfg(not(target_os = "linux"))]
             {
                 println!("Unload mode is only supported on Linux.");

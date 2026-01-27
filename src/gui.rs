@@ -1,22 +1,25 @@
-use eframe::egui;
-use cpal::traits::{DeviceTrait, HostTrait};
 use crate::audio::{AudioEngine, OutputFilterEngine};
-use crate::config::AppConfig;
-use std::process::Command;
-use std::path::PathBuf;
-use std::sync::atomic::Ordering;
-use tray_icon::{TrayIconBuilder, TrayIcon, menu::{Menu, MenuItem, MenuEvent}};
-use tray_icon::Icon;
 use crate::autostart;
+use crate::config::AppConfig;
+use crate::pulse_info;
 use crate::updater::{self, UpdateInfo};
 use crate::virtual_device;
-use crate::pulse_info;
+use cpal::traits::{DeviceTrait, HostTrait};
+use eframe::egui;
+use std::path::PathBuf;
+use std::process::Command;
+use std::sync::atomic::Ordering;
+use tray_icon::Icon;
+use tray_icon::{
+    menu::{Menu, MenuEvent, MenuItem},
+    TrayIcon, TrayIconBuilder,
+};
 
 /// Runs the VoidMic GUI application.
-/// 
+///
 /// # Arguments
 /// * `model_path` - Path to the model directory (currently unused as RNNoise weights are embedded)
-/// 
+///
 /// # Returns
 /// Result indicating success or failure of the GUI application
 pub fn run_gui(model_path: PathBuf) -> eframe::Result<()> {
@@ -24,17 +27,17 @@ pub fn run_gui(model_path: PathBuf) -> eframe::Result<()> {
     let config = AppConfig::load();
     let start_minimized = config.start_minimized;
     let dark_mode = config.dark_mode;
-    
+
     // Build viewport with saved position if available
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([450.0, 450.0])
         .with_resizable(false)
         .with_visible(!start_minimized);
-    
+
     if let (Some(x), Some(y)) = (config.window_x, config.window_y) {
         viewport = viewport.with_position([x, y]);
     }
-    
+
     let options = eframe::NativeOptions {
         viewport,
         ..Default::default()
@@ -105,26 +108,35 @@ impl VoidMicApp {
             .with_icon(icon)
             .build()
             .ok();
-        
+
         // Start async update check
         let update_receiver = Some(updater::check_for_updates_async());
-        
+
         let (inputs, outputs) = get_devices();
-        
+
         let default_in = if inputs.contains(&config.last_input) {
             config.last_input.clone()
         } else {
-            inputs.first().cloned().unwrap_or_else(|| "default".to_string())
+            inputs
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "default".to_string())
         };
 
         let default_out = if outputs.contains(&config.last_output) {
             config.last_output.clone()
         } else {
-            outputs.first().cloned().unwrap_or_else(|| "default".to_string())
+            outputs
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "default".to_string())
         };
 
-        let default_ref = inputs.first().cloned().unwrap_or_else(|| "default".to_string());
-        
+        let default_ref = inputs
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "default".to_string());
+
         let auto_start = config.auto_start_processing;
 
         let mut app = Self {
@@ -148,20 +160,20 @@ impl VoidMicApp {
             last_app_refresh: std::time::Instant::now(),
             selected_reference: default_ref,
         };
-        
+
         // Auto-start processing if enabled
         if auto_start {
             app.start_engine();
         }
-        
+
         app
     }
-    
+
     fn start_engine(&mut self) {
         if self.engine.is_some() {
             return; // Already running
         }
-        
+
         match AudioEngine::start(
             &self.selected_input,
             &self.selected_output,
@@ -182,7 +194,7 @@ impl VoidMicApp {
             }
         }
     }
-    
+
     fn stop_engine(&mut self) {
         self.engine = None;
         self.status_msg = "Stopped".to_string();
@@ -216,7 +228,10 @@ impl VoidMicApp {
             let version = update.version.clone();
             let url = update.download_url.clone();
             ui.horizontal(|ui| {
-                ui.colored_label(egui::Color32::GOLD, format!("🎉 Update available: {}", version));
+                ui.colored_label(
+                    egui::Color32::GOLD,
+                    format!("🎉 Update available: {}", version),
+                );
                 if ui.small_button("Download").clicked() {
                     let _ = open::that(&url);
                 }
@@ -236,16 +251,24 @@ impl VoidMicApp {
         } else {
             0.0
         };
-        
-        let db = if volume > 0.0001 { 20.0 * volume.log10() } else { -60.0 };
-        let bar_len = ((db + 60.0) / 60.0).clamp(0.0, 1.0);
-        let color = if volume > self.config.gate_threshold { 
-            egui::Color32::GREEN 
-        } else { 
-            egui::Color32::DARK_GRAY 
+
+        let db = if volume > 0.0001 {
+            20.0 * volume.log10()
+        } else {
+            -60.0
         };
-        
-        ui.add(egui::ProgressBar::new(bar_len).fill(color).text(format!("{:.1} dB", db)));
+        let bar_len = ((db + 60.0) / 60.0).clamp(0.0, 1.0);
+        let color = if volume > self.config.gate_threshold {
+            egui::Color32::GREEN
+        } else {
+            egui::Color32::DARK_GRAY
+        };
+
+        ui.add(
+            egui::ProgressBar::new(bar_len)
+                .fill(color)
+                .text(format!("{:.1} dB", db)),
+        );
         ui.label(egui::RichText::new("Green = Transmitting (Above Gate)").size(10.0));
     }
 
@@ -259,11 +282,16 @@ impl VoidMicApp {
                 .show_ui(ui, |ui| {
                     let mut changed = false;
                     for dev in &self.input_devices {
-                        if ui.selectable_value(&mut self.selected_input, dev.clone(), dev).changed() {
+                        if ui
+                            .selectable_value(&mut self.selected_input, dev.clone(), dev)
+                            .changed()
+                        {
                             changed = true;
                         }
                     }
-                    if changed { self.mark_config_dirty(); }
+                    if changed {
+                        self.mark_config_dirty();
+                    }
                 });
             ui.end_row();
 
@@ -274,11 +302,16 @@ impl VoidMicApp {
                 .show_ui(ui, |ui| {
                     let mut changed = false;
                     for dev in &self.output_devices {
-                        if ui.selectable_value(&mut self.selected_output, dev.clone(), dev).changed() {
+                        if ui
+                            .selectable_value(&mut self.selected_output, dev.clone(), dev)
+                            .changed()
+                        {
                             changed = true;
                         }
                     }
-                    if changed { self.mark_config_dirty(); }
+                    if changed {
+                        self.mark_config_dirty();
+                    }
                 });
             ui.end_row();
         });
@@ -287,10 +320,13 @@ impl VoidMicApp {
     /// Renders the threshold and suppression controls.
     fn render_threshold_controls(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            if ui.checkbox(&mut self.config.dynamic_threshold_enabled, "Auto-Gate").changed() {
+            if ui
+                .checkbox(&mut self.config.dynamic_threshold_enabled, "Auto-Gate")
+                .changed()
+            {
                 self.mark_config_dirty();
             }
-            
+
             ui.add_enabled_ui(!self.config.dynamic_threshold_enabled, |ui| {
                 ui.label("Gate Threshold:");
                 let slider = egui::Slider::new(&mut self.config.gate_threshold, 0.005..=0.05)
@@ -300,9 +336,14 @@ impl VoidMicApp {
                     self.mark_config_dirty();
                 }
             });
-            
-            let calibrate_enabled = self.engine.is_some() && !self.is_calibrating && !self.config.dynamic_threshold_enabled;
-            if ui.add_enabled(calibrate_enabled, egui::Button::new("🎯 Calibrate")).clicked() {
+
+            let calibrate_enabled = self.engine.is_some()
+                && !self.is_calibrating
+                && !self.config.dynamic_threshold_enabled;
+            if ui
+                .add_enabled(calibrate_enabled, egui::Button::new("🎯 Calibrate"))
+                .clicked()
+            {
                 if let Some(engine) = &self.engine {
                     engine.calibration_mode.store(true, Ordering::Relaxed);
                     self.is_calibrating = true;
@@ -310,7 +351,7 @@ impl VoidMicApp {
                 }
             }
         });
-        
+
         ui.horizontal(|ui| {
             ui.label("Suppression:");
             let pct = (self.config.suppression_strength * 100.0) as i32;
@@ -343,16 +384,29 @@ impl VoidMicApp {
     /// Renders advanced features (output filter, echo cancellation).
     fn render_advanced_features(&mut self, ui: &mut egui::Ui) {
         ui.heading("Advanced Features");
-        
+
         ui.horizontal(|ui| {
-            if ui.checkbox(&mut self.config.output_filter_enabled, "Filter Output (Speaker Denoising)").changed() {
+            if ui
+                .checkbox(
+                    &mut self.config.output_filter_enabled,
+                    "Filter Output (Speaker Denoising)",
+                )
+                .changed()
+            {
                 self.mark_config_dirty();
             }
-            ui.label(egui::RichText::new("⚠️ ~100ms latency").size(10.0).color(egui::Color32::YELLOW));
+            ui.label(
+                egui::RichText::new("⚠️ ~100ms latency")
+                    .size(10.0)
+                    .color(egui::Color32::YELLOW),
+            );
         });
 
         ui.horizontal(|ui| {
-            if ui.checkbox(&mut self.config.echo_cancel_enabled, "Echo Cancellation").changed() {
+            if ui
+                .checkbox(&mut self.config.echo_cancel_enabled, "Echo Cancellation")
+                .changed()
+            {
                 self.mark_config_dirty();
             }
         });
@@ -365,7 +419,8 @@ impl VoidMicApp {
                     .width(200.0)
                     .show_ui(ui, |ui| {
                         for dev in &self.input_devices {
-                            let _ = ui.selectable_value(&mut self.selected_reference, dev.clone(), dev);
+                            let _ =
+                                ui.selectable_value(&mut self.selected_reference, dev.clone(), dev);
                         }
                     });
                 ui.label(egui::RichText::new("ℹ️ Select speaker monitor").size(10.0));
@@ -382,12 +437,12 @@ impl eframe::App for VoidMicApp {
                 self.is_quitting = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             } else if event.id.0 == SHOW_ID {
-               // Toggle visibility or just show
-               // We can't easily check current visibility state from here without tracking it, 
-               // but we can just force visible for now or toggle logic if we track it.
-               // For simplicity, let's just ensure it is visible and focused.
-               ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-               ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                // Toggle visibility or just show
+                // We can't easily check current visibility state from here without tracking it,
+                // but we can just force visible for now or toggle logic if we track it.
+                // For simplicity, let's just ensure it is visible and focused.
+                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
             } else if event.id.0 == TOGGLE_ID {
                 // Toggle engine on/off
                 if self.engine.is_some() {
@@ -407,18 +462,16 @@ impl eframe::App for VoidMicApp {
         }
 
         // Handle Close Request (Minimize to Tray)
-        if ctx.input(|i| i.viewport().close_requested()) {
-            if !self.is_quitting {
-                // Save window position before hiding
-                if let Some(pos) = ctx.input(|i| i.viewport().outer_rect).map(|r| r.min) {
-                    self.config.window_x = Some(pos.x);
-                    self.config.window_y = Some(pos.y);
-                    self.save_config_now();
-                }
-                
-                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
-                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        if ctx.input(|i| i.viewport().close_requested()) && !self.is_quitting {
+            // Save window position before hiding
+            if let Some(pos) = ctx.input(|i| i.viewport().outer_rect).map(|r| r.min) {
+                self.config.window_x = Some(pos.x);
+                self.config.window_y = Some(pos.y);
+                self.save_config_now();
             }
+
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
         }
 
         ctx.request_repaint();
@@ -436,7 +489,7 @@ impl eframe::App for VoidMicApp {
             if self.render_update_banner(ui) {
                 self.update_info = None;
             }
-            
+
             ui.heading("VoidMic 🌌");
             ui.label(egui::RichText::new("Hybrid Noise Reduction (RNNoise + Gate)").size(10.0).weak());
             ui.separator();
@@ -474,7 +527,7 @@ impl eframe::App for VoidMicApp {
                         .collect();
                     self.last_app_refresh = std::time::Instant::now();
                 }
-                
+
                 if !self.connected_apps.is_empty() {
                     ui.add_space(10.0);
                     egui::CollapsingHeader::new(format!("📱 Connected Apps ({})", self.connected_apps.len()))
@@ -489,11 +542,11 @@ impl eframe::App for VoidMicApp {
 
             let is_running = self.engine.is_some();
             let btn_text = if is_running { "STOP ENGINE" } else { "ACTIVATE VOIDMIC" };
-            
+
             let btn = ui.add_sized([ui.available_width(), 50.0], egui::Button::new(
                 egui::RichText::new(btn_text).size(18.0).strong()
             ));
-            
+
             if btn.clicked() {
                 if is_running {
                     self.engine = None;
@@ -501,7 +554,7 @@ impl eframe::App for VoidMicApp {
                     self.status_msg = "Stopped".to_string();
                 } else {
                     self.status_msg = "Initializing Hybrid Engine...".to_string();
-                    
+
                     // Auto-create virtual sink on Linux
                     #[cfg(target_os = "linux")]
                     {
@@ -529,8 +582,8 @@ impl eframe::App for VoidMicApp {
                             }
                         }
                     }
-                    
-                    
+
+
                     // Start Output Filter if enabled
                     if self.config.output_filter_enabled {
                          match OutputFilterEngine::start(&self.selected_reference, &self.selected_output, self.config.suppression_strength) {
@@ -543,10 +596,10 @@ impl eframe::App for VoidMicApp {
                     }
 
                     match AudioEngine::start(
-                        &self.selected_input, 
-                        &self.selected_output, 
-                        &self.model_path, 
-                        self.config.gate_threshold, 
+                        &self.selected_input,
+                        &self.selected_output,
+                        &self.model_path,
+                        self.config.gate_threshold,
                         self.config.suppression_strength,
                         self.config.echo_cancel_enabled,
                         if self.config.echo_cancel_enabled { Some(&self.selected_reference) } else { None },
@@ -578,7 +631,7 @@ impl eframe::App for VoidMicApp {
 
             ui.add_space(10.0);
             ui.label(format!("Status: {}", self.status_msg));
-            
+
              ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
                  ui.horizontal(|ui| {
                     if ui.button("🛠️ Install Virtual Cable").clicked() {
@@ -597,7 +650,7 @@ impl eframe::App for VoidMicApp {
                     }
                  });
                  ui.separator();
-                
+
                  // Start on Boot checkbox
                  let mut start_on_boot = self.config.start_on_boot;
                  if ui.checkbox(&mut start_on_boot, "Start on Boot").changed() {
@@ -609,30 +662,28 @@ impl eframe::App for VoidMicApp {
                          } else {
                              self.status_msg = "Autostart enabled".to_string();
                          }
+                     } else if let Err(e) = autostart::disable_autostart() {
+                         self.status_msg = format!("Autostart error: {}", e);
                      } else {
-                         if let Err(e) = autostart::disable_autostart() {
-                             self.status_msg = format!("Autostart error: {}", e);
-                         } else {
-                             self.status_msg = "Autostart disabled".to_string();
-                         }
+                         self.status_msg = "Autostart disabled".to_string();
                      }
                      self.save_config_now();
                  }
-                 
+
                  // Start Minimized checkbox
                  let mut start_minimized = self.config.start_minimized;
                  if ui.checkbox(&mut start_minimized, "Start Minimized to Tray").changed() {
                      self.config.start_minimized = start_minimized;
                      self.save_config_now();
                  }
-                 
-                 // Auto-Start Processing checkbox  
+
+                 // Auto-Start Processing checkbox
                  let mut auto_start = self.config.auto_start_processing;
                  if ui.checkbox(&mut auto_start, "Auto-Start Processing").changed() {
                      self.config.auto_start_processing = auto_start;
                      self.save_config_now();
                  }
-                 
+
                  // Dark Mode checkbox
                  let mut dark_mode = self.config.dark_mode;
                  if ui.checkbox(&mut dark_mode, "Dark Mode").changed() {
@@ -655,13 +706,21 @@ impl eframe::App for VoidMicApp {
 
 fn get_devices() -> (Vec<String>, Vec<String>) {
     let host = cpal::default_host();
-    let inputs = host.input_devices().map(|devs| {
-        devs.map(|d| d.name().unwrap_or("Unknown".to_string())).collect()
-    }).unwrap_or_default();
-    
-    let outputs = host.output_devices().map(|devs| {
-        devs.map(|d| d.name().unwrap_or("Unknown".to_string())).collect()
-    }).unwrap_or_default();
+    let inputs = host
+        .input_devices()
+        .map(|devs| {
+            devs.map(|d| d.name().unwrap_or("Unknown".to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let outputs = host
+        .output_devices()
+        .map(|devs| {
+            devs.map(|d| d.name().unwrap_or("Unknown".to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
 
     (inputs, outputs)
 }
@@ -670,26 +729,31 @@ fn install_virtual_cable() -> Result<String, String> {
     if cfg!(target_os = "linux") {
         // Check if module is already loaded
         let check = Command::new("pactl")
-            .args(&["list", "short", "sinks"])
+            .args(["list", "short", "sinks"])
             .output()
-            .map_err(|e| format!("Failed to check sinks: {}. Is PulseAudio/PipeWire installed?", e))?;
-        
+            .map_err(|e| {
+                format!(
+                    "Failed to check sinks: {}. Is PulseAudio/PipeWire installed?",
+                    e
+                )
+            })?;
+
         let output_str = String::from_utf8_lossy(&check.stdout);
         if output_str.contains("VoidMic_Clean") {
             return Ok("Virtual sink 'VoidMic_Clean' already exists.".to_string());
         }
-        
+
         // Load the module
         let result = Command::new("pactl")
-            .args(&[
-                "load-module", 
-                "module-null-sink", 
-                "sink_name=VoidMic_Clean", 
-                "sink_properties=device.description=VoidMic_Clean"
+            .args([
+                "load-module",
+                "module-null-sink",
+                "sink_name=VoidMic_Clean",
+                "sink_properties=device.description=VoidMic_Clean",
             ])
             .output()
             .map_err(|e| format!("Failed to create sink: {}", e))?;
-            
+
         if result.status.success() {
             Ok("Virtual sink 'VoidMic_Clean' created! Select 'Monitor of VoidMic_Clean' in your apps.".to_string())
         } else {
@@ -717,12 +781,13 @@ fn generate_icon() -> Icon {
             // Simple green circle
             let dx = (x as i32) - 16;
             let dy = (y as i32) - 16;
-            if dx*dx + dy*dy < 14*14 {
-                 rgba.extend_from_slice(&[0, 255, 0, 255]);
+            if dx * dx + dy * dy < 14 * 14 {
+                rgba.extend_from_slice(&[0, 255, 0, 255]);
             } else {
-                 rgba.extend_from_slice(&[0, 0, 0, 0]);
+                rgba.extend_from_slice(&[0, 0, 0, 0]);
             }
         }
     }
-    Icon::from_rgba(rgba, width, height).unwrap_or_else(|_| Icon::from_rgba(vec![0; 32*32*4], 32, 32).unwrap())
+    Icon::from_rgba(rgba, width, height)
+        .unwrap_or_else(|_| Icon::from_rgba(vec![0; 32 * 32 * 4], 32, 32).unwrap())
 }

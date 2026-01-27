@@ -2,31 +2,29 @@
 //!
 //! Provides PID file management for graceful shutdown of background processes.
 
+use directories::ProjectDirs;
 use std::fs;
 use std::path::PathBuf;
-use directories::ProjectDirs;
 
 const PID_FILENAME: &str = "daemon.pid";
 
 /// Gets the path to the PID file.
 fn pid_file_path() -> Option<PathBuf> {
-    ProjectDirs::from("com", "voidmic", "voidmic")
-        .map(|dirs| dirs.data_dir().join(PID_FILENAME))
+    ProjectDirs::from("com", "voidmic", "voidmic").map(|dirs| dirs.data_dir().join(PID_FILENAME))
 }
 
 /// Writes the current process ID to the PID file.
 pub fn write_pid_file() -> Result<(), String> {
     let path = pid_file_path().ok_or("Could not determine data directory")?;
-    
+
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .map_err(|e| format!("Failed to create data directory: {}", e))?;
     }
-    
+
     let pid = std::process::id();
-    fs::write(&path, pid.to_string())
-        .map_err(|e| format!("Failed to write PID file: {}", e))?;
-    
+    fs::write(&path, pid.to_string()).map_err(|e| format!("Failed to write PID file: {}", e))?;
+
     Ok(())
 }
 
@@ -41,14 +39,14 @@ pub fn read_pid_file() -> Option<u32> {
 pub fn remove_pid_file() -> Result<(), String> {
     if let Some(path) = pid_file_path() {
         if path.exists() {
-            fs::remove_file(&path)
-                .map_err(|e| format!("Failed to remove PID file: {}", e))?;
+            fs::remove_file(&path).map_err(|e| format!("Failed to remove PID file: {}", e))?;
         }
     }
     Ok(())
 }
 
 /// Checks if the daemon is running by checking if the PID file exists and the process is alive.
+#[allow(dead_code)]
 pub fn is_daemon_running() -> bool {
     if let Some(pid) = read_pid_file() {
         // Check if process is still running
@@ -72,13 +70,13 @@ pub fn is_daemon_running() -> bool {
 pub fn stop_daemon() -> Result<(), String> {
     if let Some(pid) = read_pid_file() {
         use std::process::Command;
-        
+
         let result = Command::new("kill")
             .arg("-TERM")
             .arg(pid.to_string())
             .output()
             .map_err(|e| format!("Failed to send signal: {}", e))?;
-        
+
         if result.status.success() {
             // Wait briefly for process to exit
             std::thread::sleep(std::time::Duration::from_millis(500));

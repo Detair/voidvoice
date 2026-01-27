@@ -20,19 +20,19 @@ pub fn get_connected_apps() -> Vec<ConnectedApp> {
             .args(["list", "source-outputs"])
             .output()
             .ok();
-        
+
         let Some(output) = output else {
             return Vec::new();
         };
-        
+
         if !output.status.success() {
             return Vec::new();
         }
-        
+
         let text = String::from_utf8_lossy(&output.stdout);
         parse_source_outputs(&text)
     }
-    
+
     #[cfg(not(target_os = "linux"))]
     {
         Vec::new()
@@ -45,10 +45,10 @@ fn parse_source_outputs(text: &str) -> Vec<ConnectedApp> {
     let mut current_id: Option<u32> = None;
     let mut current_name: Option<String> = None;
     let mut on_voidmic = false;
-    
+
     for line in text.lines() {
         let line = line.trim();
-        
+
         // New source output block
         if line.starts_with("Source Output #") {
             // Save previous if valid
@@ -60,7 +60,7 @@ fn parse_source_outputs(text: &str) -> Vec<ConnectedApp> {
                     });
                 }
             }
-            
+
             // Parse new ID
             if let Some(id_str) = line.strip_prefix("Source Output #") {
                 current_id = id_str.parse().ok();
@@ -79,7 +79,7 @@ fn parse_source_outputs(text: &str) -> Vec<ConnectedApp> {
                 .map(|s| s.trim_matches('"').to_string());
         }
     }
-    
+
     // Handle last entry
     if let (Some(id), Some(name)) = (current_id, current_name) {
         if on_voidmic {
@@ -89,14 +89,14 @@ fn parse_source_outputs(text: &str) -> Vec<ConnectedApp> {
             });
         }
     }
-    
+
     apps
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_parse_source_outputs() {
         let sample = r#"
