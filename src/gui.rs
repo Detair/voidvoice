@@ -14,6 +14,8 @@ use tray_icon::{
     menu::{Menu, MenuEvent, MenuItem},
     TrayIcon, TrayIconBuilder,
 };
+use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager};
+use global_hotkey::hotkey::HotKey;
 
 /// Runs the VoidMic GUI application.
 ///
@@ -63,6 +65,55 @@ fn setup_custom_style(ctx: &egui::Context, dark_mode: bool) {
     }
 }
 
+struct Preset {
+    name: &'static str,
+    gate_threshold: f32,
+    suppression_strength: f32,
+    dynamic_threshold_enabled: bool,
+}
+
+const PRESETS: &[Preset] = &[
+    Preset {
+        name: "Standard",
+        gate_threshold: 0.015,
+        suppression_strength: 1.0,
+        dynamic_threshold_enabled: true,
+    },
+    Preset {
+        name: "Gaming",
+        gate_threshold: 0.030,
+        suppression_strength: 1.0,
+        dynamic_threshold_enabled: true,
+    },
+    Preset {
+        name: "Podcast",
+        gate_threshold: 0.008,
+        suppression_strength: 0.6,
+        dynamic_threshold_enabled: true,
+    },
+    Preset {
+        name: "Noisy Office",
+        gate_threshold: 0.020,
+        suppression_strength: 1.0,
+        dynamic_threshold_enabled: true,
+    },
+    Preset {
+        name: "Music",
+        gate_threshold: 0.002,
+        suppression_strength: 0.3,
+        dynamic_threshold_enabled: false,
+    },
+];
+
+#[derive(PartialEq)]
+enum WizardStep {
+    Welcome,
+    SelectMic,
+    SelectOutput,
+    Calibration,
+    Finish,
+}
+
 struct VoidMicApp {
     input_devices: Vec<String>,
     output_devices: Vec<String>,
@@ -86,6 +137,13 @@ struct VoidMicApp {
     output_filter_engine: Option<OutputFilterEngine>,
     // Echo Cancellation
     selected_reference: String,
+    // Global Hotkeys
+    #[allow(dead_code)] // Manager must be kept alive
+    hotkey_manager: GlobalHotKeyManager,
+    hotkey_id: Option<u32>,
+    // Wizard State
+    show_wizard: bool,
+    wizard_step: WizardStep,
 }
 
 const QUIT_ID: &str = "quit";
@@ -101,7 +159,7 @@ impl VoidMicApp {
         let quit_item = MenuItem::with_id(QUIT_ID, "Quit", true, None);
         let _ = tray_menu.append_items(&[&toggle_item, &show_item, &quit_item]);
 
-        let icon = generate_icon();
+        let icon = load_icon();
         let tray_icon = TrayIconBuilder::new()
             .with_menu(Box::new(tray_menu))
             .with_tooltip("VoidMic")
@@ -138,6 +196,7 @@ impl VoidMicApp {
             .unwrap_or_else(|| "default".to_string());
 
         let auto_start = config.auto_start_processing;
+        let show_wizard = config.first_run;
 
         let mut app = Self {
             input_devices: inputs,
@@ -159,7 +218,20 @@ impl VoidMicApp {
             output_filter_engine: None,
             last_app_refresh: std::time::Instant::now(),
             selected_reference: default_ref,
+            hotkey_manager: GlobalHotKeyManager::new().unwrap(),
+            hotkey_id: None,
+            show_wizard,
+            wizard_step: WizardStep::Welcome,
         };
+
+        // Register Hotkey
+        if let Ok(hotkey) = app.config.toggle_hotkey.parse::<HotKey>() {
+             if app.hotkey_manager.register(hotkey).is_ok() {
+                 app.hotkey_id = Some(hotkey.id());
+             } else {
+                 log::warn!("Failed to register hotkey: {}", app.config.toggle_hotkey);
+             }
+        }
 
         // Auto-start processing if enabled
         if auto_start {
@@ -200,6 +272,20 @@ impl VoidMicApp {
         self.status_msg = "Stopped".to_string();
     }
 
+    fn toggle_engine(&mut self) {
+        if self.engine.is_some() {
+            self.stop_engine();
+            if let Some(ref tray) = self.tray_icon {
+                let _ = tray.set_tooltip(Some("VoidMic - Disabled"));
+            }
+        } else {
+            self.start_engine();
+            if let Some(ref tray) = self.tray_icon {
+                let _ = tray.set_tooltip(Some("VoidMic - Active"));
+            }
+        }
+    }
+
     fn mark_config_dirty(&mut self) {
         self.config_dirty = true;
     }
@@ -218,6 +304,18 @@ impl VoidMicApp {
         self.config.last_input = self.selected_input.clone();
         self.config.last_output = self.selected_output.clone();
         self.config.save();
+    }
+
+    fn apply_preset(&mut self, preset_name: &str) {
+        if let Some(preset) = PRESETS.iter().find(|p| p.name == preset_name) {
+            self.config.gate_threshold = preset.gate_threshold;
+            self.config.suppression_strength = preset.suppression_strength;
+            self.config.dynamic_threshold_enabled = preset.dynamic_threshold_enabled;
+            // Echo cancel is user preference, not preset
+            // Output filter is user preference
+            self.config.preset = preset_name.to_string();
+            self.save_config_now();
+        }
     }
 
     /// Renders the update banner at the top of the UI.
@@ -245,6 +343,7 @@ impl VoidMicApp {
     }
 
     /// Renders the volume meter with dB scaling.
+    /// Renders the volume meter with dB scaling and threshold marker.
     fn render_volume_meter(&self, ui: &mut egui::Ui) {
         let volume = if let Some(engine) = &self.engine {
             f32::from_bits(engine.volume_level.load(Ordering::Relaxed))
@@ -252,24 +351,63 @@ impl VoidMicApp {
             0.0
         };
 
-        let db = if volume > 0.0001 {
+        // Calculate DB for current volume
+        let volume_db = if volume > 0.0001 {
             20.0 * volume.log10()
         } else {
             -60.0
         };
-        let bar_len = ((db + 60.0) / 60.0).clamp(0.0, 1.0);
+        let bar_len = ((volume_db + 60.0) / 60.0).clamp(0.0, 1.0);
+
+        // Calculate DB for threshold
+        let threshold_db = if self.config.gate_threshold > 0.0001 {
+            20.0 * self.config.gate_threshold.log10()
+        } else {
+            -60.0
+        };
+        let threshold_pos = ((threshold_db + 60.0) / 60.0).clamp(0.0, 1.0);
+
         let color = if volume > self.config.gate_threshold {
             egui::Color32::GREEN
         } else {
             egui::Color32::DARK_GRAY
         };
 
-        ui.add(
-            egui::ProgressBar::new(bar_len)
-                .fill(color)
-                .text(format!("{:.1} dB", db)),
-        );
-        ui.label(egui::RichText::new("Green = Transmitting (Above Gate)").size(10.0));
+        // Custom painting
+        let (rect, _response) = ui.allocate_at_least(egui::vec2(ui.available_width(), 20.0), egui::Sense::hover());
+        
+        if ui.is_rect_visible(rect) {
+            let painter = ui.painter();
+            
+            // Background
+            painter.rect_filled(rect, 2.0, egui::Color32::from_gray(40));
+
+            // Fill (Volume Bar)
+            if bar_len > 0.0 {
+                let mut fill_rect = rect;
+                fill_rect.set_width(rect.width() * bar_len);
+                painter.rect_filled(fill_rect, 2.0, color);
+            }
+
+            // Threshold Marker
+            let marker_x = rect.min.x + rect.width() * threshold_pos;
+            painter.line_segment(
+                [egui::pos2(marker_x, rect.min.y), egui::pos2(marker_x, rect.max.y)],
+                egui::Stroke::new(2.0, egui::Color32::WHITE),
+            );
+            
+            // Text overlay
+            let text = format!("{:.1} dB", volume_db);
+            painter.text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                text,
+                egui::FontId::proportional(12.0),
+                egui::Color32::WHITE,
+            );
+        }
+
+        ui.label(egui::RichText::new("White Line = Gate Threshold. Keep noise to the left, voice to the right.").size(10.0));
     }
 
     /// Renders the device selection dropdowns.
@@ -319,11 +457,33 @@ impl VoidMicApp {
 
     /// Renders the threshold and suppression controls.
     fn render_threshold_controls(&mut self, ui: &mut egui::Ui) {
+        // Presets Dropdown
+        ui.horizontal(|ui| {
+            ui.label("Preset:");
+            egui::ComboBox::from_id_source("preset_combo")
+                .selected_text(&self.config.preset)
+                .show_ui(ui, |ui| {
+                    if ui.selectable_label(self.config.preset == "Custom", "Custom").clicked() {
+                         self.config.preset = "Custom".to_string();
+                         self.save_config_now();
+                    }
+                    ui.separator();
+                    for preset in PRESETS {
+                        if ui.selectable_label(self.config.preset == preset.name, preset.name).clicked() {
+                            self.apply_preset(preset.name);
+                        }
+                    }
+                });
+        });
+
+        ui.add_space(5.0);
+
         ui.horizontal(|ui| {
             if ui
                 .checkbox(&mut self.config.dynamic_threshold_enabled, "Auto-Gate")
                 .changed()
             {
+                self.config.preset = "Custom".to_string();
                 self.mark_config_dirty();
             }
 
@@ -333,6 +493,7 @@ impl VoidMicApp {
                     .text("")
                     .fixed_decimals(3);
                 if ui.add(slider).changed() {
+                    self.config.preset = "Custom".to_string();
                     self.mark_config_dirty();
                 }
             });
@@ -359,7 +520,8 @@ impl VoidMicApp {
                 .text(format!("{}%", pct))
                 .fixed_decimals(0);
             if ui.add(slider).changed() {
-                self.mark_config_dirty();
+                 self.config.preset = "Custom".to_string();
+                 self.mark_config_dirty();
             }
         });
     }
@@ -427,6 +589,118 @@ impl VoidMicApp {
             });
         }
     }
+
+    fn render_wizard(&mut self, ctx: &egui::Context) {
+        egui::CentralPanel::default().show(ctx, |ui| {
+             ui.vertical_centered(|ui| {
+                 ui.add_space(20.0);
+                 ui.heading("✨ Welcome to VoidMic ✨");
+                 ui.add_space(10.0);
+                 ui.label("Let's get your audio set up for crystal clear communication.");
+                 ui.add_space(20.0);
+                 ui.separator();
+                 ui.add_space(20.0);
+
+                 match self.wizard_step {
+                     WizardStep::Welcome => {
+                         ui.label("VoidMic uses AI to remove background noise from your microphone.");
+                         ui.label("This short wizard will help you select your devices and calibrate the noise gate.");
+                         ui.add_space(40.0);
+                         if ui.button("Get Started ➡").clicked() {
+                             self.wizard_step = WizardStep::SelectMic;
+                         }
+                     }
+                     WizardStep::SelectMic => {
+                         ui.heading("🎤 Select Microphone");
+                         ui.add_space(10.0);
+                         ui.label("Choose the microphone you want to clean up:");
+                         let input_devices = self.input_devices.clone();
+                         egui::ComboBox::from_id_source("wizard_mic")
+                            .selected_text(&self.selected_input)
+                            .width(250.0)
+                            .show_ui(ui, |ui| {
+                                for dev in &input_devices {
+                                    if ui.selectable_value(&mut self.selected_input, dev.clone(), dev).changed() {
+                                        self.mark_config_dirty();
+                                    }
+                                }
+                            });
+                         
+                         ui.add_space(40.0);
+                         if ui.button("Next ➡").clicked() {
+                             self.wizard_step = WizardStep::SelectMic; // Should be SelectOutput, fixing logic error too? No, wait.
+                             self.wizard_step = WizardStep::SelectOutput;
+                         }
+                     }
+                     WizardStep::SelectOutput => {
+                         ui.heading("🔊 Select Output");
+                         ui.add_space(10.0);
+                         ui.label("Choose where you want to hear the processed audio (or your speakers):");
+                         let output_devices = self.output_devices.clone();
+                         egui::ComboBox::from_id_source("wizard_out")
+                            .selected_text(&self.selected_output)
+                            .width(250.0)
+                            .show_ui(ui, |ui| {
+                                for dev in &output_devices {
+                                     if ui.selectable_value(&mut self.selected_output, dev.clone(), dev).changed() {
+                                        self.mark_config_dirty();
+                                    }
+                                }
+                            });
+                         
+                         ui.add_space(40.0);
+                         ui.horizontal(|ui| {
+                             if ui.button("⬅ Back").clicked() { self.wizard_step = WizardStep::SelectMic; }
+                             if ui.button("Next ➡").clicked() { self.wizard_step = WizardStep::Calibration; }
+                         });
+                     }
+                     WizardStep::Calibration => {
+                         ui.heading("🎛️ Calibration");
+                         ui.add_space(10.0);
+                         ui.label("Stay quiet for 3 seconds to measure background noise.");
+                         
+                         self.render_volume_meter(ui);
+
+                         ui.add_space(20.0);
+                         
+                         let calibrate_enabled = self.engine.is_some() && !self.is_calibrating;
+                         
+                         if self.engine.is_none() {
+                             if ui.button("▶ Start Audio Engine").clicked() {
+                                 self.start_engine();
+                             }
+                         } else if ui.add_enabled(calibrate_enabled, egui::Button::new("🎯 Start Calibration")).clicked() {
+                             if let Some(engine) = &self.engine {
+                                 engine.calibration_mode.store(true, Ordering::Relaxed);
+                                 self.is_calibrating = true;
+                                 self.status_msg = "Calibrating... stay quiet".to_string();
+                             }
+                         }
+
+                         ui.label(format!("Status: {}", self.status_msg));
+                         self.check_calibration_result();
+
+                         ui.add_space(40.0);
+                         ui.horizontal(|ui| {
+                             if ui.button("⬅ Back").clicked() { self.wizard_step = WizardStep::SelectOutput; }
+                             if ui.button("Finish ✅").clicked() { self.wizard_step = WizardStep::Finish; }
+                         });
+                     }
+                     WizardStep::Finish => {
+                         ui.heading("🎉 All Set!");
+                         ui.label("VoidMic is ready to use.");
+                         ui.add_space(20.0);
+                         if ui.button("Open Main Interface").clicked() {
+                             self.config.first_run = false;
+                             self.show_wizard = false;
+                             self.save_config_now();
+                         }
+                     }
+                 }
+             });
+        });
+    }
+
 }
 
 impl eframe::App for VoidMicApp {
@@ -444,19 +718,15 @@ impl eframe::App for VoidMicApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
             } else if event.id.0 == TOGGLE_ID {
-                // Toggle engine on/off
-                if self.engine.is_some() {
-                    self.stop_engine();
-                    // Update tray tooltip
-                    if let Some(ref tray) = self.tray_icon {
-                        let _ = tray.set_tooltip(Some("VoidMic - Disabled"));
-                    }
-                } else {
-                    self.start_engine();
-                    // Update tray tooltip
-                    if let Some(ref tray) = self.tray_icon {
-                        let _ = tray.set_tooltip(Some("VoidMic - Active"));
-                    }
+                self.toggle_engine();
+            }
+        }
+
+        // Handle Global Hotkeys
+        if let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
+            if let Some(id) = self.hotkey_id {
+                if event.id == id && event.state == global_hotkey::HotKeyState::Released {
+                    self.toggle_engine();
                 }
             }
         }
@@ -482,6 +752,11 @@ impl eframe::App for VoidMicApp {
                 self.update_info = update;
                 self.update_receiver = None; // Consumed
             }
+        }
+
+        if self.show_wizard {
+            self.render_wizard(ctx);
+            return;
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -699,6 +974,13 @@ impl eframe::App for VoidMicApp {
                          ui.ctx().set_visuals(egui::Visuals::light());
                      }
                  }
+
+                 ui.add_space(5.0);
+                 ui.horizontal(|ui| {
+                     ui.label("Global Hotkey:");
+                     ui.code(self.config.toggle_hotkey.as_str());
+                     ui.label(egui::RichText::new("ℹ️ Edit in config.json").size(10.0));
+                 });
             });
         });
     }
@@ -772,22 +1054,13 @@ fn install_virtual_cable() -> Result<String, String> {
         Err("Unsupported platform".to_string())
     }
 }
-fn generate_icon() -> Icon {
-    let width = 32;
-    let height = 32;
-    let mut rgba = Vec::with_capacity((width * height * 4) as usize);
-    for y in 0..height {
-        for x in 0..width {
-            // Simple green circle
-            let dx = (x as i32) - 16;
-            let dy = (y as i32) - 16;
-            if dx * dx + dy * dy < 14 * 14 {
-                rgba.extend_from_slice(&[0, 255, 0, 255]);
-            } else {
-                rgba.extend_from_slice(&[0, 0, 0, 0]);
-            }
-        }
-    }
+fn load_icon() -> Icon {
+    let icon_bytes = include_bytes!("../assets/icon_32.png");
+    let image = image::load_from_memory(icon_bytes)
+        .expect("Failed to load icon asset")
+        .into_rgba8();
+    let (width, height) = image.dimensions();
+    let rgba = image.into_raw();
     Icon::from_rgba(rgba, width, height)
         .unwrap_or_else(|_| Icon::from_rgba(vec![0; 32 * 32 * 4], 32, 32).unwrap())
 }

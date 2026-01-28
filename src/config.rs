@@ -30,6 +30,24 @@ pub struct AppConfig {
     pub window_y: Option<f32>,
     #[serde(default = "default_dark_mode")]
     pub dark_mode: bool,
+    #[serde(default = "default_preset")]
+    pub preset: String,
+    #[serde(default = "default_toggle_hotkey")]
+    pub toggle_hotkey: String,
+    #[serde(default = "default_first_run")]
+    pub first_run: bool,
+}
+
+fn default_first_run() -> bool {
+    true
+}
+
+fn default_toggle_hotkey() -> String {
+    "Control+Shift+M".to_string()
+}
+
+fn default_preset() -> String {
+    "Standard".to_string()
 }
 
 fn default_gate_threshold() -> f32 {
@@ -60,6 +78,9 @@ impl Default for AppConfig {
             window_x: None,
             window_y: None,
             dark_mode: true,
+            preset: default_preset(),
+            toggle_hotkey: default_toggle_hotkey(),
+            first_run: true,
         }
     }
 }
@@ -124,6 +145,9 @@ mod tests {
             window_x: None,
             window_y: None,
             dark_mode: true,
+            preset: "Gaming".to_string(),
+            toggle_hotkey: "Control+Shift+M".to_string(),
+            first_run: true,
         };
 
         let json = serde_json::to_string(&config).unwrap();
@@ -159,6 +183,9 @@ mod tests {
             window_x: Some(100.0),
             window_y: Some(200.0),
             dark_mode: false,
+            preset: "Podcast".to_string(),
+            toggle_hotkey: "Control+Shift+K".to_string(),
+            first_run: false,
         };
 
         let json = serde_json::to_string(&original).unwrap();
