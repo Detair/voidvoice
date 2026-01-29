@@ -11,3 +11,7 @@ voidmic_core = { path = "../core" }
 nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git" }
 ringbuf = "0.2.8"
 anyhow = "1.0"
+nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git" }
+egui = "0.31"
+voidmic_ui = { path = "../ui" }
+crossbeam-channel = "0.5.15"

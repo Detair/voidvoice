@@ -12,6 +12,7 @@ path = "src/main.rs"
 voidmic_core = { path = "../core" }
 cpal = "0.15.3"
 ringbuf = "0.4.7"
+voidmic_ui = { path = "../ui" }
 clap = { version = "4.5", features = ["derive"] }
 anyhow = "1.0"
 log = "0.4"
@@ -26,13 +27,13 @@ reqwest = { version = "0.13.1", features = ["blocking", "json"] }
 semver = "1.0.27"
 
 # GUI dependencies
-eframe = { version = "0.26", optional = true }
+eframe = { version = "0.31", optional = true }
 tray-icon = { version = "0.21.3", default-features = false, optional = true }
 muda = { version = "0.17.1", default-features = false, features = ["gtk"], optional = true }
 global-hotkey = "0.7.0"
 image = { version = "0.24", default-features = false, features = ["png"] }
 crossbeam-channel = "0.5.15" # Needed for receiving from core
-egui_plot = "0.26.2"
+egui_plot = "0.31"
 
 [features]
 default = ["gui"]

@@ -239,7 +239,7 @@ impl VoidProcessor {
         agc_target_level: f32,
         echo_cancel_enabled: bool,
     ) -> Self {
-        let mut vad = Vad::new_with_rate_and_mode(
+        let vad = Vad::new_with_rate_and_mode(
             webrtc_vad::SampleRate::Rate48kHz,
             match vad_sensitivity {
                 0 => VadMode::Quality,

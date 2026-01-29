@@ -91,7 +91,7 @@ impl AudioEngine {
 
         // Latency management (100ms buffer)
         let buffer_size = (SAMPLE_RATE as usize) / 10;
-        let latency_frames = buffer_size; // For clarity, though unused
+        let _latency_frames = buffer_size; // For clarity, though unused
 
         // Ring buffers
         let rb_in = HeapRb::<f32>::new(buffer_size);

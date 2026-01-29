@@ -16,8 +16,8 @@ use tray_icon::{
 };
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager};
 use global_hotkey::hotkey::HotKey;
-use egui_plot::{Line, Plot, PlotPoints};
 use crossbeam_channel::Receiver;
+use voidmic_ui::{theme, visualizer, widgets};
 
 /// Runs the VoidMic GUI application.
 ///
@@ -50,22 +50,12 @@ pub fn run_gui(model_path: PathBuf) -> eframe::Result<()> {
         "VoidMic",
         options,
         Box::new(move |cc| {
-            setup_custom_style(&cc.egui_ctx, dark_mode);
-            Box::new(VoidMicApp::new_with_config(model_path, config))
+            theme::setup_custom_style(&cc.egui_ctx, dark_mode);
+            Ok(Box::new(VoidMicApp::new_with_config(model_path, config)))
         }),
     )
 }
 
-fn setup_custom_style(ctx: &egui::Context, dark_mode: bool) {
-    if dark_mode {
-        let mut visuals = egui::Visuals::dark();
-        visuals.window_fill = egui::Color32::from_rgb(20, 20, 25);
-        visuals.panel_fill = egui::Color32::from_rgb(20, 20, 25);
-        ctx.set_visuals(visuals);
-    } else {
-        ctx.set_visuals(egui::Visuals::light());
-    }
-}
 
 struct Preset {
     name: &'static str,
@@ -372,70 +362,14 @@ impl VoidMicApp {
             0.0
         };
 
-        // Calculate DB for current volume
-        let volume_db = if volume > 0.0001 {
-            20.0 * volume.log10()
-        } else {
-            -60.0
-        };
-        let bar_len = ((volume_db + 60.0) / 60.0).clamp(0.0, 1.0);
-
-        // Calculate DB for threshold
-        let threshold_db = if self.config.gate_threshold > 0.0001 {
-            20.0 * self.config.gate_threshold.log10()
-        } else {
-            -60.0
-        };
-        let threshold_pos = ((threshold_db + 60.0) / 60.0).clamp(0.0, 1.0);
-
-        let color = if volume > self.config.gate_threshold {
-            egui::Color32::GREEN
-        } else {
-            egui::Color32::DARK_GRAY
-        };
-
-        // Custom painting
-        let (rect, _response) = ui.allocate_at_least(egui::vec2(ui.available_width(), 20.0), egui::Sense::hover());
-        
-        if ui.is_rect_visible(rect) {
-            let painter = ui.painter();
-            
-            // Background
-            painter.rect_filled(rect, 2.0, egui::Color32::from_gray(40));
-
-            // Fill (Volume Bar)
-            if bar_len > 0.0 {
-                let mut fill_rect = rect;
-                fill_rect.set_width(rect.width() * bar_len);
-                painter.rect_filled(fill_rect, 2.0, color);
-            }
-
-            // Threshold Marker
-            let marker_x = rect.min.x + rect.width() * threshold_pos;
-            painter.line_segment(
-                [egui::pos2(marker_x, rect.min.y), egui::pos2(marker_x, rect.max.y)],
-                egui::Stroke::new(2.0, egui::Color32::WHITE),
-            );
-            
-            // Text overlay
-            let text = format!("{:.1} dB", volume_db);
-            painter.text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
-                text,
-                egui::FontId::proportional(12.0),
-                egui::Color32::WHITE,
-            );
-        }
-
-        ui.label(egui::RichText::new("White Line = Gate Threshold. Keep noise to the left, voice to the right.").size(10.0));
+        widgets::render_volume_meter(ui, volume, self.config.gate_threshold);
     }
 
     /// Renders the device selection dropdowns.
     fn render_device_selectors(&mut self, ui: &mut egui::Ui) {
         egui::Grid::new("device_grid").striped(true).show(ui, |ui| {
             ui.label("Microphone:");
-            egui::ComboBox::from_id_source("input_combo")
+            egui::ComboBox::from_id_salt("input_combo")
                 .selected_text(&self.selected_input)
                 .width(250.0)
                 .show_ui(ui, |ui| {
@@ -455,7 +389,7 @@ impl VoidMicApp {
             ui.end_row();
 
             ui.label("Output Sink:");
-            egui::ComboBox::from_id_source("output_combo")
+            egui::ComboBox::from_id_salt("output_combo")
                 .selected_text(&self.selected_output)
                 .width(250.0)
                 .show_ui(ui, |ui| {
@@ -481,7 +415,7 @@ impl VoidMicApp {
         // Presets Dropdown
         ui.horizontal(|ui| {
             ui.label("Preset:");
-            egui::ComboBox::from_id_source("preset_combo")
+            egui::ComboBox::from_id_salt("preset_combo")
                 .selected_text(&self.config.preset)
                 .show_ui(ui, |ui| {
                     if ui.selectable_label(self.config.preset == "Custom", "Custom").clicked() {
@@ -597,7 +531,7 @@ impl VoidMicApp {
         if self.config.echo_cancel_enabled || self.config.output_filter_enabled {
             ui.horizontal(|ui| {
                 ui.label("Reference Input (Monitor):");
-                egui::ComboBox::from_id_source("ref_combo")
+                egui::ComboBox::from_id_salt("ref_combo")
                     .selected_text(&self.selected_reference)
                     .width(200.0)
                     .show_ui(ui, |ui| {
@@ -615,7 +549,7 @@ impl VoidMicApp {
         // VAD Controls
         ui.horizontal(|ui| {
             ui.label("VAD Sensitivity:");
-            egui::ComboBox::from_id_source("vad_combo")
+            egui::ComboBox::from_id_salt("vad_combo")
                 .selected_text(match self.config.vad_sensitivity {
                     0 => "Quality (Likely Speech)",
                     1 => "Low Bitrate",
@@ -734,35 +668,7 @@ impl VoidMicApp {
          }
 
          let (in_data, out_data) = &self.last_spectrum_data;
-         if in_data.is_empty() {
-             ui.label("Waiting for audio...");
-             return;
-         }
-
-         // Prepare plot lines
-         // Map index to approx frequency. 480 bins -> 0..24kHz?
-         // samples_fft_to_spectrum gives bins based on window size.
-         // If we sent raw magnitudes, we need to know the frequency mapping.
-         // For now, just plot index 0..N
-         
-         let red_line = Line::new(PlotPoints::from_ys_f32(in_data))
-             .color(egui::Color32::from_rgba_premultiplied(100, 0, 0, 100))
-             .fill(0.0); // Fill input (noise) with red/grey
-
-         let green_line = Line::new(PlotPoints::from_ys_f32(out_data))
-             .color(egui::Color32::GREEN)
-             .width(2.0); // Clean output
-
-         Plot::new("spectrum")
-             .height(100.0)
-             .show_axes([false, false])
-             .show_grid([false, false])
-             .allow_drag(false)
-             .allow_zoom(false)
-             .show(ui, |plot_ui| {
-                 plot_ui.line(red_line);
-                 plot_ui.line(green_line);
-             });
+         visualizer::render_spectrum(ui, in_data, out_data);
     }
 
 
@@ -841,7 +747,7 @@ impl VoidMicApp {
                          ui.add_space(10.0);
                          ui.label("Choose the microphone you want to clean up:");
                          let input_devices = self.input_devices.clone();
-                         egui::ComboBox::from_id_source("wizard_mic")
+                         egui::ComboBox::from_id_salt("wizard_mic")
                             .selected_text(&self.selected_input)
                             .width(250.0)
                             .show_ui(ui, |ui| {
@@ -863,7 +769,7 @@ impl VoidMicApp {
                          ui.add_space(10.0);
                          ui.label("Choose where you want to hear the processed audio (or your speakers):");
                          let output_devices = self.output_devices.clone();
-                         egui::ComboBox::from_id_source("wizard_out")
+                         egui::ComboBox::from_id_salt("wizard_out")
                             .selected_text(&self.selected_output)
                             .width(250.0)
                             .show_ui(ui, |ui| {

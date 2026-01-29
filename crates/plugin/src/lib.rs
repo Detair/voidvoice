@@ -1,24 +1,37 @@
 use nih_plug::prelude::*;
+use nih_plug_egui::{create_egui_editor, EguiState, widgets};
 use ringbuf::{Consumer, Producer, RingBuffer};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::num::NonZeroU32;
 use voidmic_core::constants::{FRAME_SIZE, SAMPLE_RATE};
 use voidmic_core::VoidProcessor;
+use crossbeam_channel::Receiver;
+use voidmic_ui::{theme, visualizer, widgets as ui_widgets};
 
 struct VoidMicPlugin {
     params: Arc<VoidMicParams>,
+    editor_state: Arc<EguiState>,
+    
+    // Audio Processing State
     processor: Option<VoidProcessor>,
     
-    // Ring Buffers (ringbuf 0.2.8 types)
+    // Ring Buffers (Audio I/O)
     rb_in_prod: Option<Producer<f32>>,
     rb_in_cons: Option<Consumer<f32>>,
     rb_out_prod: Option<Producer<f32>>,
     rb_out_cons: Option<Consumer<f32>>,
+
+    // GUI Data Bridging
+    volume_level: Arc<AtomicU32>, 
+    spectrum_receiver: Option<Receiver<(Vec<f32>, Vec<f32>)>>,
 }
 
 #[derive(Params)]
 struct VoidMicParams {
+    #[persist = "editor-state"]
+    editor_state: Arc<EguiState>,
+
     #[id = "threshold"]
     pub gate_threshold: FloatParam,
 
@@ -32,15 +45,25 @@ struct VoidMicParams {
     pub agc_enabled: BoolParam,
 }
 
+struct GuiData {
+    params: Arc<VoidMicParams>,
+    volume_level: Arc<AtomicU32>, 
+    spectrum_receiver: Option<Receiver<(Vec<f32>, Vec<f32>)>>,
+    last_spectrum_data: (Vec<f32>, Vec<f32>),
+}
+
 impl Default for VoidMicPlugin {
     fn default() -> Self {
         Self {
             params: Arc::new(VoidMicParams::default()),
+            editor_state: EguiState::from_size(450, 450),
             processor: None,
             rb_in_prod: None,
             rb_in_cons: None,
             rb_out_prod: None,
             rb_out_cons: None,
+            volume_level: Arc::new(AtomicU32::new(0)),
+            spectrum_receiver: None,
         }
     }
 }
@@ -48,18 +71,21 @@ impl Default for VoidMicPlugin {
 impl Default for VoidMicParams {
     fn default() -> Self {
         Self {
+            editor_state: EguiState::from_size(450, 450),
             gate_threshold: FloatParam::new(
                 "Gate Threshold",
                 0.015,
-                FloatRange::Linear { min: 0.000, max: 0.1 },
+                FloatRange::Linear { min: 0.005, max: 0.05 },
             )
-            .with_step_size(0.001),
+            .with_step_size(0.001)
+            .with_unit(""),
             
             suppression: FloatParam::new(
                 "Suppression",
                 1.0,
                 FloatRange::Linear { min: 0.0, max: 1.0 },
-            ),
+            )
+            .with_unit("%"),
 
             bypass: BoolParam::new("Bypass", false),
             agc_enabled: BoolParam::new("AGC", false),
@@ -97,6 +123,64 @@ impl Plugin for VoidMicPlugin {
         self.params.clone()
     }
 
+    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
+        let gui_data = GuiData {
+            params: self.params.clone(),
+            volume_level: self.volume_level.clone(),
+            spectrum_receiver: self.spectrum_receiver.clone(),
+            last_spectrum_data: (Vec::new(), Vec::new()),
+        };
+
+        create_egui_editor(
+            self.params.editor_state.clone(),
+            gui_data,
+            |_, _| {},
+            move |egui_ctx, setter, state| {
+                theme::setup_custom_style(egui_ctx, true);
+                
+                egui::CentralPanel::default().show(egui_ctx, |ui| {
+                     ui.heading("VoidMic Plugin");
+                     ui.separator();
+                     
+                     let params = &state.params;
+
+                     // Bypass & AGC
+                     ui.horizontal(|ui| {
+                         ui.label("Bypass:");
+                         ui.add(widgets::ParamSlider::for_param(&params.bypass, setter)); 
+                     });
+                     
+                     ui.add_space(10.0);
+                     
+                     // Controls
+                     ui.label("Gate Threshold:");
+                     ui.add(widgets::ParamSlider::for_param(&params.gate_threshold, setter));
+                     
+                     ui.label("Suppression:");
+                     ui.add(widgets::ParamSlider::for_param(&params.suppression, setter));
+                     
+                     ui.separator();
+                     
+                     // Volume Meter
+                     let vol = f32::from_bits(state.volume_level.load(Ordering::Relaxed));
+                     let thresh = params.gate_threshold.value();
+                     ui_widgets::render_volume_meter(ui, vol, thresh);
+                     
+                     // Visualizer
+                     ui.add_space(10.0);
+                     ui.label("Spectrum:");
+                     
+                     if let Some(rx) = &state.spectrum_receiver {
+                         while let Ok(data) = rx.try_recv() {
+                             state.last_spectrum_data = data;
+                         }
+                     }
+                     visualizer::render_spectrum(ui, &state.last_spectrum_data.0, &state.last_spectrum_data.1);
+                });
+            },
+        )
+    }
+
     fn initialize(
         &mut self,
         _audio_io_layout: &AudioIOLayout,
@@ -107,17 +191,25 @@ impl Plugin for VoidMicPlugin {
             nih_log!("VoidMic only supports 48kHz currently. Host is using {:.0}Hz", buffer_config.sample_rate);
         }
 
-        let processor = VoidProcessor::new(
-            2, // Default VAD: Aggressive
-            (0.0, 0.0, 0.0), // No EQ default
-            0.7, // AGC Target
-            false, // Echo Cancel disabled for plugin
-        );
+        let (tx, rx) = crossbeam_channel::bounded(2);
+        self.spectrum_receiver = Some(rx);
 
+        let processor = VoidProcessor::new(
+            2, 
+            (0.0, 0.0, 0.0), 
+            0.7,
+            false,
+        );
+        
+        let mut processor = processor;
+        processor.spectrum_sender = Some(tx);
+        
+        self.volume_level = processor.volume_level.clone();
         self.processor = Some(processor);
 
         let buffer_size = FRAME_SIZE * 4;
         
+        // Ringbuf 0.2.8
         let rb_in = RingBuffer::<f32>::new(buffer_size);
         let (prod_in, cons_in) = rb_in.split();
         self.rb_in_prod = Some(prod_in);
@@ -142,10 +234,9 @@ impl Plugin for VoidMicPlugin {
             None => return ProcessStatus::Normal,
         };
 
-        // Sync Parameters
         processor.bypass_enabled.store(self.params.bypass.value(), Ordering::Relaxed);
         processor.agc_enabled.store(self.params.agc_enabled.value(), Ordering::Relaxed);
-
+        
         processor.process_updates();
 
         let channel_data = buffer.as_slice();
@@ -155,7 +246,7 @@ impl Plugin for VoidMicPlugin {
         }
         let num_samples = channel_data[0].len();
         
-        // 1. Push Input to Ring Buffer
+        // 1. Push Input
         if let Some(prod_in) = &mut self.rb_in_prod {
              for i in 0..num_samples {
                  let sample = if num_channels > 1 {
@@ -168,12 +259,11 @@ impl Plugin for VoidMicPlugin {
              }
         }
 
-        // 2. Process chunks if available
+        // 2. Process chunks
         if let (Some(cons_in), Some(prod_out)) = (&mut self.rb_in_cons, &mut self.rb_out_prod) {
             let mut input_frame = [0.0f32; FRAME_SIZE];
             let mut output_frame = [0.0f32; FRAME_SIZE];
             
-            // ringbuf 0.2.8 len()
             while cons_in.len() >= FRAME_SIZE {
                 for j in 0..FRAME_SIZE {
                      input_frame[j] = cons_in.pop().unwrap_or(0.0);
@@ -194,7 +284,7 @@ impl Plugin for VoidMicPlugin {
             }
         }
 
-        // 3. Output from Ring Buffer
+        // 3. Output
         if let Some(cons_out) = &mut self.rb_out_cons {
             for i in 0..num_samples {
                 let sample = cons_out.pop().unwrap_or(0.0);

@@ -189,6 +189,9 @@ mod tests {
             eq_low_gain: 3.0,
             eq_mid_gain: -1.0,
             eq_high_gain: 0.0,
+            agc_enabled: false,
+            agc_target_level: 0.7,
+            mini_mode: false,
         };
 
         let json = serde_json::to_string(&config).unwrap();
@@ -234,6 +237,9 @@ mod tests {
             eq_low_gain: 0.0,
             eq_mid_gain: 0.0,
             eq_high_gain: 0.0,
+            agc_enabled: true,
+            agc_target_level: 0.8,
+            mini_mode: true,
         };
 
         let json = serde_json::to_string(&original).unwrap();
