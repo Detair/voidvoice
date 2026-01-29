@@ -4,6 +4,28 @@ version = "0.9.0"
 edition = "2021"
 default-run = "voidmic_app"
 
+description = "Hybrid AI Noise Reduction for Linux"
+license = "MIT"
+repository = "https://github.com/Detair/voidvoice"
+homepage = "https://github.com/Detair/voidvoice"
+
+[package.metadata.deb]
+maintainer = "Detair <detair@pmind.de>"
+copyright = "2026, Detair"
+depends = "$auto"
+assets = [
+    ["../../target/release/voidmic_app", "usr/bin/voidmic", "755"],
+    ["../../assets/voidmic.desktop", "usr/share/applications/voidmic.desktop", "644"],
+    ["../../assets/icon_32.png", "usr/share/icons/hicolor/32x32/apps/voidmic.png", "644"],
+]
+
+[package.metadata.generate-rpm]
+assets = [
+    { source = "../../target/release/voidmic_app", dest = "/usr/bin/voidmic", mode = "755" },
+    { source = "../../assets/voidmic.desktop", dest = "/usr/share/applications/voidmic.desktop", mode = "644" },
+    { source = "../../assets/icon_32.png", dest = "/usr/share/icons/hicolor/32x32/apps/voidmic.png", mode = "644" },
+]
+
 [[bin]]
 name = "voidmic_app"
 path = "src/main.rs"

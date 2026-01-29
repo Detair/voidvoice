@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.5] - 2026-01-29
+### 📦 Packaging
+- **Fixed DEB/RPM builds**: Corrected crate paths and metadata.
+- **Improved LV2 Support**: Added manual manifests for LV2 plugin.
+
 ## [0.9.4] - 2026-01-29
 ### 🔧 Maintenance
 - **Formatting**: Fixed trailing whitespace in GUI code that caused CI failures.

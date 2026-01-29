@@ -38,8 +38,10 @@ jobs:
 
     - name: Package App (Deb/RPM)
       run: |
-        cargo deb -p voidmic_app
-        cargo generate-rpm -p voidmic_app
+        cd crates/app
+        cargo deb --no-build
+        cargo generate-rpm
+        cd ../..
 
     - name: Package App (AppImage)
       run: |
@@ -74,7 +76,7 @@ jobs:
         # LV2
         # Needs manifests + binary
         cp target/release/libvoidmic_lv2.so plugins/voidmic.lv2/
-        cp dist/voidmic.lv2/*.ttl plugins/voidmic.lv2/
+        cp crates/lv2/*.ttl plugins/voidmic.lv2/
         
         # Create Tarball
         cd plugins
@@ -89,8 +91,8 @@ jobs:
         files: |
           voidmic-plugins-linux-x86_64.tar.gz
           voidmic-plugins-linux-x86_64.tar.gz.sha256
-          target/debian/*.deb
-          target/generate-rpm/*.rpm
+          crates/app/target/debian/*.deb
+          crates/app/target/generate-rpm/*.rpm
           *.AppImage
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
