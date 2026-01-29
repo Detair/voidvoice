@@ -1,6 +1,6 @@
 # VoidMic 🌌 (Hybrid Edition)
 
-![VoidMic Hero Banner](assets/hero_banner.png)
+![VoidMic Hero Banner](assets/hero_banner.jpg)
 
 [![CI](https://github.com/Detair/voidvoice/actions/workflows/ci.yml/badge.svg)](https://github.com/Detair/voidvoice/actions/workflows/ci.yml)
 [![Release](https://github.com/Detair/voidvoice/actions/workflows/release.yml/badge.svg)](https://github.com/Detair/voidvoice/actions/workflows/release.yml)
