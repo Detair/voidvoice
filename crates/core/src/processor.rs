@@ -182,10 +182,8 @@ impl LookaheadLimiter {
             } else {
                 self.current_gain += (target_gain - self.current_gain) * self.release_coeff;
             }
-        } else {
-            if self.current_gain > 1.0 {
-                self.current_gain -= 0.001;
-            }
+        } else if self.current_gain > 1.0 {
+            self.current_gain -= 0.001;
         }
 
         // Apply gain to all channels
@@ -407,7 +405,7 @@ impl VoidProcessor {
             if let Some(aec_instance) = self.echo_canceller.get_mut(i) {
                 if let Some(refs) = ref_frames {
                     // Try to match channel, or use channel 0 if fewer refs
-                    if let Some(ref_ch) = refs.get(i).or(refs.get(0)) {
+                    if let Some(ref_ch) = refs.get(i).or(refs.first()) {
                         let processed = aec_instance.process_frame(&temp_input, ref_ch);
                         temp_input.copy_from_slice(&processed);
                     }
@@ -508,8 +506,7 @@ impl VoidProcessor {
                 }
 
                 // 4. Apply Gate & EQ & AGC to ALL channels
-                for i in 0..channels {
-                    let output_ch = &mut output_frames[i];
+                for (i, output_ch) in output_frames.iter_mut().enumerate().take(channels) {
 
                     // Gate
                     if !self.gate_open {
@@ -599,8 +596,8 @@ impl VoidProcessor {
             // Need Input Mono Mix too
             let mut input_mono = [0.0f32; FRAME_SIZE];
             for j in 0..FRAME_SIZE {
-                for i in 0..channels {
-                    input_mono[j] += input_frames[i][j];
+                for input_ch in input_frames.iter().take(channels) {
+                    input_mono[j] += input_ch[j];
                 }
                 input_mono[j] *= norm_factor;
             }
