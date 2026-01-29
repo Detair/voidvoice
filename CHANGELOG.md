@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.9.1] - 2026-01-29
+### 🐛 Fixes
+- **CI/CD**: Added missing `libx11-xcb-dev` dependency to build workflows to fix Linux build failures.
+
 ## [0.9.0] - 2026-01-29
 
 ### 🚀 Major Features
