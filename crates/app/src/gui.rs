@@ -408,6 +408,57 @@ impl VoidMicApp {
                 });
             ui.end_row();
         });
+
+        ui.add_space(10.0);
+
+        // One-Click Setup Section
+        ui.horizontal(|ui| {
+             let sink_exists = virtual_device::virtual_sink_exists();
+             
+             if sink_exists {
+                 ui.colored_label(egui::Color32::GREEN, "✔ Virtual Mic Active");
+                 if ui.button("Destroy").clicked() {
+                     // Best effort cleanup
+                     if let Some(id) = self.virtual_sink_module_id {
+                         let _ = virtual_device::destroy_virtual_sink(id);
+                     } else {
+                         let _ = virtual_device::destroy_virtual_sink(0);
+                     }
+                     self.virtual_sink_module_id = None;
+                     // Refresh device list to remove it
+                     let (inputs, outputs) = get_devices();
+                     self.input_devices = inputs;
+                     self.output_devices = outputs;
+                 }
+                 
+                 // Hint for usage
+                 ui.label(egui::RichText::new("ℹ️ Select 'VoidMic_Clean' in Discord").size(10.0));
+             } else {
+                 if ui.button("✨ Create Virtual Mic").on_hover_text("Creates a virtual device for Discord/Zoom").clicked() {
+                      match virtual_device::create_virtual_sink() {
+                          Ok(device) => {
+                              self.virtual_sink_module_id = Some(device.module_id);
+                              
+                              // Refresh devices
+                              let (inputs, outputs) = get_devices();
+                              self.input_devices = inputs;
+                              self.output_devices = outputs;
+                              
+                              // Auto-select the new sink
+                              if self.output_devices.contains(&device.sink_name) {
+                                  self.selected_output = device.sink_name;
+                                  self.mark_config_dirty();
+                              }
+                              
+                              self.status_msg = "Virtual Mic Created!".to_string();
+                          },
+                          Err(e) => {
+                              self.status_msg = format!("Failed to create sink: {}", e);
+                          }
+                      }
+                 }
+             }
+        });
     }
 
     /// Renders the threshold and suppression controls.
