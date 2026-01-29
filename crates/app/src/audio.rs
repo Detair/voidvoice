@@ -1,9 +1,7 @@
-use voidmic_core::constants::{FRAME_SIZE, SAMPLE_RATE};
-use voidmic_core::VoidProcessor;
 use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use crossbeam_channel::Sender;
 use log::{info, warn};
-use voidmic_core::DenoiseState;
 use ringbuf::traits::{Consumer, Observer, Producer, Split};
 use ringbuf::HeapRb;
 use std::path::Path;
@@ -11,7 +9,9 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use crossbeam_channel::Sender;
+use voidmic_core::constants::{FRAME_SIZE, SAMPLE_RATE};
+use voidmic_core::DenoiseState;
+use voidmic_core::VoidProcessor;
 
 // Gate timing constants (all in milliseconds)
 
@@ -23,17 +23,17 @@ pub struct AudioEngine {
     _output_stream: cpal::Stream,
     _reference_stream: Option<cpal::Stream>,
     is_running: Arc<AtomicBool>,
-    
+
     // Shared state for GUI communication
     pub volume_level: Arc<AtomicU32>,
     pub calibration_mode: Arc<AtomicBool>,
     pub calibration_result: Arc<AtomicU32>,
-    
+
     pub vad_sensitivity: Arc<AtomicU32>,
     pub eq_low_gain: Arc<AtomicU32>,
     pub eq_mid_gain: Arc<AtomicU32>,
     pub eq_high_gain: Arc<AtomicU32>,
-    
+
     pub agc_enabled: Arc<AtomicBool>,
     pub _agc_target: Arc<AtomicU32>, // Kept for potential GUI control
     pub bypass_enabled: Arc<AtomicBool>,
@@ -71,7 +71,10 @@ impl AudioEngine {
                 .find(|d| d.name().ok().as_deref() == Some(input_device_name))
                 .context("Input device not found")?
         };
-        info!("Using input device: {}", input_device.name().unwrap_or_default());
+        info!(
+            "Using input device: {}",
+            input_device.name().unwrap_or_default()
+        );
 
         let output_device = if output_device_name == "default" {
             host.default_output_device()
@@ -81,7 +84,10 @@ impl AudioEngine {
                 .find(|d| d.name().ok().as_deref() == Some(output_device_name))
                 .context("Output device not found")?
         };
-        info!("Using output device: {}", output_device.name().unwrap_or_default());
+        info!(
+            "Using output device: {}",
+            output_device.name().unwrap_or_default()
+        );
 
         let config = cpal::StreamConfig {
             channels: 1,
@@ -99,7 +105,7 @@ impl AudioEngine {
 
         let rb_out = HeapRb::<f32>::new(buffer_size);
         let (mut prod_out, mut cons_out) = rb_out.split();
-        
+
         let _reference_stream: Option<cpal::Stream> = None;
 
         let input_stream = input_device.build_input_stream(
@@ -129,7 +135,11 @@ impl AudioEngine {
         let mut processor = VoidProcessor::new(
             1, // Mono for App
             vad_sensitivity,
-            if eq_enabled { eq_params } else { (0.0, 0.0, 0.0) },
+            if eq_enabled {
+                eq_params
+            } else {
+                (0.0, 0.0, 0.0)
+            },
             agc_target_level,
             echo_cancel_enabled,
         );
@@ -140,7 +150,9 @@ impl AudioEngine {
         // But we need it for the thread loop?
         // In the thread loop: start with the `gate_threshold` argument.
         processor.agc_enabled.store(agc_enabled, Ordering::Relaxed);
-        processor.bypass_enabled.store(bypass_enabled, Ordering::Relaxed);
+        processor
+            .bypass_enabled
+            .store(bypass_enabled, Ordering::Relaxed);
         if let Some(sender) = spectrum_sender.clone() {
             processor.spectrum_sender = Some(sender);
         }
@@ -164,7 +176,7 @@ impl AudioEngine {
         thread::spawn(move || {
             let mut input_frame = [0.0f32; FRAME_SIZE];
             let mut output_frame = [0.0f32; FRAME_SIZE];
-            
+
             // Jitter State
             let mut last_loop_time = std::time::Instant::now();
             let mut jitter_accum = 0;
@@ -190,21 +202,23 @@ impl AudioEngine {
                     } else {
                         expected - loop_delta
                     };
-                    
+
                     if jitter > jitter_accum {
-                         jitter_accum = jitter;
+                        jitter_accum = jitter;
                     }
-                    
+
                     frames_since_jitter_reset += 1;
                     if frames_since_jitter_reset >= 100 {
-                         processor.jitter_max_us.store(jitter_accum, Ordering::Relaxed);
-                         jitter_accum = 0;
-                         frames_since_jitter_reset = 0;
+                        processor
+                            .jitter_max_us
+                            .store(jitter_accum, Ordering::Relaxed);
+                        jitter_accum = 0;
+                        frames_since_jitter_reset = 0;
                     }
 
                     // Read Audio
                     cons_in.pop_slice(&mut input_frame);
-                    
+
                     // Process Audio
                     processor.process_frame(
                         &[&input_frame],
@@ -244,7 +258,7 @@ impl AudioEngine {
             agc_enabled: agc_enabled_atomic,
             _agc_target: agc_target_atomic,
             bypass_enabled: bypass_enabled_atomic,
-            _spectrum_sender: spectrum_sender, 
+            _spectrum_sender: spectrum_sender,
             jitter_max_us: jitter_atomic,
         })
     }

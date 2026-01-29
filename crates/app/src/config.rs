@@ -46,7 +46,7 @@ pub struct AppConfig {
     pub eq_mid_gain: f32, // dB
     #[serde(default)]
     pub eq_high_gain: f32, // dB
-    
+
     // Phase 4 field
     #[serde(default)]
     pub agc_enabled: bool,

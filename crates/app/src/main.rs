@@ -68,13 +68,13 @@ fn main() -> Result<()> {
                 false,
                 None,
                 false,
-                2,          // Default VAD sensitivity (Aggressive)
-                false,      // Default EQ disabled
+                2,               // Default VAD sensitivity (Aggressive)
+                false,           // Default EQ disabled
                 (0.0, 0.0, 0.0), // Default EQ gains
-                false, // AGC Disabled for CLI
-                0.7, // AGC Target
-                false, // Bypass Disabled
-                None, // No spectrum visualizer in CLI mode
+                false,           // AGC Disabled for CLI
+                0.7,             // AGC Target
+                false,           // Bypass Disabled
+                None,            // No spectrum visualizer in CLI mode
             )?;
             println!("VoidMic Active (Hybrid). Press Ctrl+C to stop.");
 

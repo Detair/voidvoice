@@ -25,11 +25,12 @@ pub fn render_volume_meter(ui: &mut egui::Ui, volume: f32, gate_threshold: f32) 
     };
 
     // Custom painting
-    let (rect, _response) = ui.allocate_at_least(egui::vec2(ui.available_width(), 20.0), Sense::hover());
-    
+    let (rect, _response) =
+        ui.allocate_at_least(egui::vec2(ui.available_width(), 20.0), Sense::hover());
+
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
-        
+
         // Background
         painter.rect_filled(rect, 2.0, egui::Color32::from_gray(40));
 
@@ -43,10 +44,13 @@ pub fn render_volume_meter(ui: &mut egui::Ui, volume: f32, gate_threshold: f32) 
         // Threshold Marker
         let marker_x = rect.min.x + rect.width() * threshold_pos;
         painter.line_segment(
-            [Pos2::new(marker_x, rect.min.y), Pos2::new(marker_x, rect.max.y)],
+            [
+                Pos2::new(marker_x, rect.min.y),
+                Pos2::new(marker_x, rect.max.y),
+            ],
             Stroke::new(2.0, egui::Color32::WHITE),
         );
-        
+
         // Text overlay
         let text = format!("{:.1} dB", volume_db);
         painter.text(
@@ -58,5 +62,10 @@ pub fn render_volume_meter(ui: &mut egui::Ui, volume: f32, gate_threshold: f32) 
         );
     }
 
-    ui.label(egui::RichText::new("White Line = Gate Threshold. Keep noise to the left, voice to the right.").size(10.0));
+    ui.label(
+        egui::RichText::new(
+            "White Line = Gate Threshold. Keep noise to the left, voice to the right.",
+        )
+        .size(10.0),
+    );
 }

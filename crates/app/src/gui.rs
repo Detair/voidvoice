@@ -5,7 +5,10 @@ use crate::pulse_info;
 use crate::updater::{self, UpdateInfo};
 use crate::virtual_device;
 use cpal::traits::{DeviceTrait, HostTrait};
+use crossbeam_channel::Receiver;
 use eframe::egui;
+use global_hotkey::hotkey::HotKey;
+use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager};
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::Ordering;
@@ -14,9 +17,6 @@ use tray_icon::{
     menu::{Menu, MenuEvent, MenuItem},
     TrayIcon, TrayIconBuilder,
 };
-use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager};
-use global_hotkey::hotkey::HotKey;
-use crossbeam_channel::Receiver;
 use voidmic_ui::{theme, visualizer, widgets};
 
 /// Runs the VoidMic GUI application.
@@ -55,7 +55,6 @@ pub fn run_gui(model_path: PathBuf) -> eframe::Result<()> {
         }),
     )
 }
-
 
 struct Preset {
     name: &'static str,
@@ -223,11 +222,11 @@ impl VoidMicApp {
 
         // Register Hotkey
         if let Ok(hotkey) = app.config.toggle_hotkey.parse::<HotKey>() {
-             if app.hotkey_manager.register(hotkey).is_ok() {
-                 app.hotkey_id = Some(hotkey.id());
-             } else {
-                 log::warn!("Failed to register hotkey: {}", app.config.toggle_hotkey);
-             }
+            if app.hotkey_manager.register(hotkey).is_ok() {
+                app.hotkey_id = Some(hotkey.id());
+            } else {
+                log::warn!("Failed to register hotkey: {}", app.config.toggle_hotkey);
+            }
         }
 
         // Auto-start processing if enabled
@@ -413,51 +412,55 @@ impl VoidMicApp {
 
         // One-Click Setup Section
         ui.horizontal(|ui| {
-             let sink_exists = virtual_device::virtual_sink_exists();
-             
-             if sink_exists {
-                 ui.colored_label(egui::Color32::GREEN, "✔ Virtual Mic Active");
-                 if ui.button("Destroy").clicked() {
-                     // Best effort cleanup
-                     if let Some(id) = self.virtual_sink_module_id {
-                         let _ = virtual_device::destroy_virtual_sink(id);
-                     } else {
-                         let _ = virtual_device::destroy_virtual_sink(0);
-                     }
-                     self.virtual_sink_module_id = None;
-                     // Refresh device list to remove it
-                     let (inputs, outputs) = get_devices();
-                     self.input_devices = inputs;
-                     self.output_devices = outputs;
-                 }
-                 
-                 // Hint for usage
-                 ui.label(egui::RichText::new("ℹ️ Select 'VoidMic_Clean' in Discord").size(10.0));
-             } else {
-                 if ui.button("✨ Create Virtual Mic").on_hover_text("Creates a virtual device for Discord/Zoom").clicked() {
-                      match virtual_device::create_virtual_sink() {
-                          Ok(device) => {
-                              self.virtual_sink_module_id = Some(device.module_id);
-                              
-                              // Refresh devices
-                              let (inputs, outputs) = get_devices();
-                              self.input_devices = inputs;
-                              self.output_devices = outputs;
-                              
-                              // Auto-select the new sink
-                              if self.output_devices.contains(&device.sink_name) {
-                                  self.selected_output = device.sink_name;
-                                  self.mark_config_dirty();
-                              }
-                              
-                              self.status_msg = "Virtual Mic Created!".to_string();
-                          },
-                          Err(e) => {
-                              self.status_msg = format!("Failed to create sink: {}", e);
-                          }
-                      }
-                 }
-             }
+            let sink_exists = virtual_device::virtual_sink_exists();
+
+            if sink_exists {
+                ui.colored_label(egui::Color32::GREEN, "✔ Virtual Mic Active");
+                if ui.button("Destroy").clicked() {
+                    // Best effort cleanup
+                    if let Some(id) = self.virtual_sink_module_id {
+                        let _ = virtual_device::destroy_virtual_sink(id);
+                    } else {
+                        let _ = virtual_device::destroy_virtual_sink(0);
+                    }
+                    self.virtual_sink_module_id = None;
+                    // Refresh device list to remove it
+                    let (inputs, outputs) = get_devices();
+                    self.input_devices = inputs;
+                    self.output_devices = outputs;
+                }
+
+                // Hint for usage
+                ui.label(egui::RichText::new("ℹ️ Select 'VoidMic_Clean' in Discord").size(10.0));
+            } else {
+                if ui
+                    .button("✨ Create Virtual Mic")
+                    .on_hover_text("Creates a virtual device for Discord/Zoom")
+                    .clicked()
+                {
+                    match virtual_device::create_virtual_sink() {
+                        Ok(device) => {
+                            self.virtual_sink_module_id = Some(device.module_id);
+
+                            // Refresh devices
+                            let (inputs, outputs) = get_devices();
+                            self.input_devices = inputs;
+                            self.output_devices = outputs;
+
+                            // Auto-select the new sink
+                            if self.output_devices.contains(&device.sink_name) {
+                                self.selected_output = device.sink_name;
+                                self.mark_config_dirty();
+                            }
+
+                            self.status_msg = "Virtual Mic Created!".to_string();
+                        }
+                        Err(e) => {
+                            self.status_msg = format!("Failed to create sink: {}", e);
+                        }
+                    }
+                }
+            }
         });
     }
 
@@ -469,13 +472,19 @@ impl VoidMicApp {
             egui::ComboBox::from_id_salt("preset_combo")
                 .selected_text(&self.config.preset)
                 .show_ui(ui, |ui| {
-                    if ui.selectable_label(self.config.preset == "Custom", "Custom").clicked() {
-                         self.config.preset = "Custom".to_string();
-                         self.save_config_now();
+                    if ui
+                        .selectable_label(self.config.preset == "Custom", "Custom")
+                        .clicked()
+                    {
+                        self.config.preset = "Custom".to_string();
+                        self.save_config_now();
                     }
                     ui.separator();
                     for preset in PRESETS {
-                        if ui.selectable_label(self.config.preset == preset.name, preset.name).clicked() {
+                        if ui
+                            .selectable_label(self.config.preset == preset.name, preset.name)
+                            .clicked()
+                        {
                             self.apply_preset(preset.name);
                         }
                     }
@@ -526,8 +535,8 @@ impl VoidMicApp {
                 .text(format!("{}%", pct))
                 .fixed_decimals(0);
             if ui.add(slider).changed() {
-                 self.config.preset = "Custom".to_string();
-                 self.mark_config_dirty();
+                self.config.preset = "Custom".to_string();
+                self.mark_config_dirty();
             }
         });
     }
@@ -596,7 +605,7 @@ impl VoidMicApp {
         }
 
         ui.separator();
-        
+
         // VAD Controls
         ui.horizontal(|ui| {
             ui.label("VAD Sensitivity:");
@@ -610,15 +619,37 @@ impl VoidMicApp {
                 })
                 .show_ui(ui, |ui| {
                     let mut changed = false;
-                    if ui.selectable_value(&mut self.config.vad_sensitivity, 0, "Quality").clicked() { changed = true; }
-                    if ui.selectable_value(&mut self.config.vad_sensitivity, 1, "Low Bitrate").clicked() { changed = true; }
-                    if ui.selectable_value(&mut self.config.vad_sensitivity, 2, "Aggressive").clicked() { changed = true; }
-                    if ui.selectable_value(&mut self.config.vad_sensitivity, 3, "Very Aggressive").clicked() { changed = true; }
-                    
+                    if ui
+                        .selectable_value(&mut self.config.vad_sensitivity, 0, "Quality")
+                        .clicked()
+                    {
+                        changed = true;
+                    }
+                    if ui
+                        .selectable_value(&mut self.config.vad_sensitivity, 1, "Low Bitrate")
+                        .clicked()
+                    {
+                        changed = true;
+                    }
+                    if ui
+                        .selectable_value(&mut self.config.vad_sensitivity, 2, "Aggressive")
+                        .clicked()
+                    {
+                        changed = true;
+                    }
+                    if ui
+                        .selectable_value(&mut self.config.vad_sensitivity, 3, "Very Aggressive")
+                        .clicked()
+                    {
+                        changed = true;
+                    }
+
                     if changed {
                         self.mark_config_dirty();
                         if let Some(engine) = &self.engine {
-                            engine.vad_sensitivity.store(self.config.vad_sensitivity as u32, Ordering::Relaxed);
+                            engine
+                                .vad_sensitivity
+                                .store(self.config.vad_sensitivity as u32, Ordering::Relaxed);
                         }
                     }
                 });
@@ -629,7 +660,10 @@ impl VoidMicApp {
 
         // Equalizer Controls
         ui.horizontal(|ui| {
-            if ui.checkbox(&mut self.config.eq_enabled, "Equalizer (3-Band)").changed() {
+            if ui
+                .checkbox(&mut self.config.eq_enabled, "Equalizer (3-Band)")
+                .changed()
+            {
                 self.mark_config_dirty();
             }
         });
@@ -637,28 +671,43 @@ impl VoidMicApp {
         if self.config.eq_enabled {
             ui.horizontal(|ui| {
                 ui.label("Low (Bass):");
-                if ui.add(egui::Slider::new(&mut self.config.eq_low_gain, -10.0..=10.0).text("dB")).changed() {
+                if ui
+                    .add(egui::Slider::new(&mut self.config.eq_low_gain, -10.0..=10.0).text("dB"))
+                    .changed()
+                {
                     self.mark_config_dirty();
                     if let Some(engine) = &self.engine {
-                         engine.eq_low_gain.store(self.config.eq_low_gain.to_bits(), Ordering::Relaxed);
+                        engine
+                            .eq_low_gain
+                            .store(self.config.eq_low_gain.to_bits(), Ordering::Relaxed);
                     }
                 }
             });
             ui.horizontal(|ui| {
                 ui.label("Mid (Voice):");
-                if ui.add(egui::Slider::new(&mut self.config.eq_mid_gain, -10.0..=10.0).text("dB")).changed() {
+                if ui
+                    .add(egui::Slider::new(&mut self.config.eq_mid_gain, -10.0..=10.0).text("dB"))
+                    .changed()
+                {
                     self.mark_config_dirty();
                     if let Some(engine) = &self.engine {
-                         engine.eq_mid_gain.store(self.config.eq_mid_gain.to_bits(), Ordering::Relaxed);
+                        engine
+                            .eq_mid_gain
+                            .store(self.config.eq_mid_gain.to_bits(), Ordering::Relaxed);
                     }
                 }
             });
             ui.horizontal(|ui| {
                 ui.label("High (Treble):");
-                if ui.add(egui::Slider::new(&mut self.config.eq_high_gain, -10.0..=10.0).text("dB")).changed() {
+                if ui
+                    .add(egui::Slider::new(&mut self.config.eq_high_gain, -10.0..=10.0).text("dB"))
+                    .changed()
+                {
                     self.mark_config_dirty();
                     if let Some(engine) = &self.engine {
-                         engine.eq_high_gain.store(self.config.eq_high_gain.to_bits(), Ordering::Relaxed);
+                        engine
+                            .eq_high_gain
+                            .store(self.config.eq_high_gain.to_bits(), Ordering::Relaxed);
                     }
                 }
             });
@@ -666,111 +715,161 @@ impl VoidMicApp {
 
         // Phase 4: Pro Audio (AGC + Bypass)
         ui.separator();
-        
+
         ui.horizontal(|ui| {
-             if ui.checkbox(&mut self.config.agc_enabled, "Automatic Gain Control (AGC)").changed() {
+            if ui
+                .checkbox(&mut self.config.agc_enabled, "Automatic Gain Control (AGC)")
+                .changed()
+            {
                 self.mark_config_dirty();
-                 if let Some(engine) = &self.engine {
-                    engine.agc_enabled.store(self.config.agc_enabled, Ordering::Relaxed);
-                 }
-             }
-             ui.label(egui::RichText::new("ℹ️ Keeps volume consistent").size(10.0));
+                if let Some(engine) = &self.engine {
+                    engine
+                        .agc_enabled
+                        .store(self.config.agc_enabled, Ordering::Relaxed);
+                }
+            }
+            ui.label(egui::RichText::new("ℹ️ Keeps volume consistent").size(10.0));
         });
 
         ui.add_space(5.0);
-        
+
         // BIG BYPASS BUTTON
         let bypass_enabled = if let Some(engine) = &self.engine {
-             engine.bypass_enabled.load(Ordering::Relaxed)
-        } else { false };
-        let bypass_text = if bypass_enabled { "🔴 BYPASSED (Raw Audio)" } else { "🟢 Processing Active" };
-        if ui.add_sized([ui.available_width(), 30.0], egui::Button::new(egui::RichText::new(bypass_text).strong().size(14.0)).fill(if bypass_enabled { egui::Color32::DARK_RED } else { egui::Color32::DARK_GREEN })).clicked() {
-             if let Some(engine) = &self.engine {
-                 let current = engine.bypass_enabled.load(Ordering::Relaxed);
-                 engine.bypass_enabled.store(!current, Ordering::Relaxed);
-             }
+            engine.bypass_enabled.load(Ordering::Relaxed)
+        } else {
+            false
+        };
+        let bypass_text = if bypass_enabled {
+            "🔴 BYPASSED (Raw Audio)"
+        } else {
+            "🟢 Processing Active"
+        };
+        if ui
+            .add_sized(
+                [ui.available_width(), 30.0],
+                egui::Button::new(egui::RichText::new(bypass_text).strong().size(14.0)).fill(
+                    if bypass_enabled {
+                        egui::Color32::DARK_RED
+                    } else {
+                        egui::Color32::DARK_GREEN
+                    },
+                ),
+            )
+            .clicked()
+        {
+            if let Some(engine) = &self.engine {
+                let current = engine.bypass_enabled.load(Ordering::Relaxed);
+                engine.bypass_enabled.store(!current, Ordering::Relaxed);
+            }
         }
         // Spectrum Visualizer (Phase 6)
         if self.engine.is_some() {
-             ui.add_space(10.0);
-             ui.label("📊 Spectrum Analysis");
-             self.render_spectrum(ui);
-             
-             // Jitter Monitor (Phase 6)
-             let jitter = self.engine.as_ref().unwrap().jitter_max_us.load(Ordering::Relaxed);
-             ui.add_space(5.0);
-             ui.horizontal(|ui| {
+            ui.add_space(10.0);
+            ui.label("📊 Spectrum Analysis");
+            self.render_spectrum(ui);
+
+            // Jitter Monitor (Phase 6)
+            let jitter = self
+                .engine
+                .as_ref()
+                .unwrap()
+                .jitter_max_us
+                .load(Ordering::Relaxed);
+            ui.add_space(5.0);
+            ui.horizontal(|ui| {
                 ui.label("Latency Health:");
-                let color = if jitter < 1000 { egui::Color32::GREEN } 
-                           else if jitter < 5000 { egui::Color32::YELLOW } 
-                           else { egui::Color32::RED };
+                let color = if jitter < 1000 {
+                    egui::Color32::GREEN
+                } else if jitter < 5000 {
+                    egui::Color32::YELLOW
+                } else {
+                    egui::Color32::RED
+                };
                 ui.colored_label(color, format!("{} µs jitter (Max)", jitter));
-             });
+            });
         }
     }
 
     fn render_spectrum(&mut self, ui: &mut egui::Ui) {
-         // Receive new data
-         if let Some(rx) = &self.spectrum_receiver {
-             // Drain channel to get latest
-             while let Ok(data) = rx.try_recv() {
-                 self.last_spectrum_data = data;
-             }
-         }
+        // Receive new data
+        if let Some(rx) = &self.spectrum_receiver {
+            // Drain channel to get latest
+            while let Ok(data) = rx.try_recv() {
+                self.last_spectrum_data = data;
+            }
+        }
 
-         let (in_data, out_data) = &self.last_spectrum_data;
-         visualizer::render_spectrum(ui, in_data, out_data);
+        let (in_data, out_data) = &self.last_spectrum_data;
+        visualizer::render_spectrum(ui, in_data, out_data);
     }
 
-
     fn render_mini(&mut self, ctx: &egui::Context) -> bool {
-         let mut expanded = false;
-         egui::CentralPanel::default().show(ctx, |ui| {
-             ui.vertical_centered(|ui| {
-                 ui.add_space(5.0);
-                 ui.horizontal(|ui| {
-                      ui.label("🌌 VoidMic");
-                      ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                          if ui.button("⛶").on_hover_text("Expand").clicked() {
-                              self.config.mini_mode = false;
-                              self.mark_config_dirty();
-                              expanded = true;
-                              ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize([450.0, 450.0].into()));
-                          }
-                      });
-                 });
-                 
-                 ui.separator();
-                 
-                 // Status
-                 let active = self.engine.is_some();
-                 ui.colored_label(
-                     if active { egui::Color32::GREEN } else { egui::Color32::RED },
-                     if active { "Active" } else { "Inactive" }
-                 );
-                 
-                 ui.add_space(5.0);
-                 
-                 // Bypass Button (Big)
-                 let bypass_enabled = if let Some(engine) = &self.engine {
-                      engine.bypass_enabled.load(Ordering::Relaxed)
-                 } else { false };
-                 
-                 let btn_color = if bypass_enabled { egui::Color32::DARK_RED } else { egui::Color32::DARK_GREEN };
-                 let btn_text = if bypass_enabled { "Stopped" } else { "Processing" };
-                 
-                 if ui.add_sized([80.0, 30.0], egui::Button::new(btn_text).fill(btn_color)).clicked() {
-                      if let Some(engine) = &self.engine {
-                          let current = engine.bypass_enabled.load(Ordering::Relaxed);
-                          engine.bypass_enabled.store(!current, Ordering::Relaxed);
-                      }
-                 }
-                 
-                 ui.add_space(5.0);
-                 self.render_volume_meter(ui);
-             });
-         });
-         expanded
+        let mut expanded = false;
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.add_space(5.0);
+                ui.horizontal(|ui| {
+                    ui.label("🌌 VoidMic");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("⛶").on_hover_text("Expand").clicked() {
+                            self.config.mini_mode = false;
+                            self.mark_config_dirty();
+                            expanded = true;
+                            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(
+                                [450.0, 450.0].into(),
+                            ));
+                        }
+                    });
+                });
+
+                ui.separator();
+
+                // Status
+                let active = self.engine.is_some();
+                ui.colored_label(
+                    if active {
+                        egui::Color32::GREEN
+                    } else {
+                        egui::Color32::RED
+                    },
+                    if active { "Active" } else { "Inactive" },
+                );
+
+                ui.add_space(5.0);
+
+                // Bypass Button (Big)
+                let bypass_enabled = if let Some(engine) = &self.engine {
+                    engine.bypass_enabled.load(Ordering::Relaxed)
+                } else {
+                    false
+                };
+
+                let btn_color = if bypass_enabled {
+                    egui::Color32::DARK_RED
+                } else {
+                    egui::Color32::DARK_GREEN
+                };
+                let btn_text = if bypass_enabled {
+                    "Stopped"
+                } else {
+                    "Processing"
+                };
+
+                if ui
+                    .add_sized([80.0, 30.0], egui::Button::new(btn_text).fill(btn_color))
+                    .clicked()
+                {
+                    if let Some(engine) = &self.engine {
+                        let current = engine.bypass_enabled.load(Ordering::Relaxed);
+                        engine.bypass_enabled.store(!current, Ordering::Relaxed);
+                    }
+                }
+
+                ui.add_space(5.0);
+                self.render_volume_meter(ui);
+            });
+        });
+        expanded
     }
 
     fn render_wizard(&mut self, ctx: &egui::Context) {
@@ -808,7 +907,7 @@ impl VoidMicApp {
                                     }
                                 }
                             });
-                         
+
                          ui.add_space(40.0);
                          if ui.button("Next ➡").clicked() {
                              self.wizard_step = WizardStep::SelectMic; // Should be SelectOutput, fixing logic error too? No, wait.
@@ -830,7 +929,7 @@ impl VoidMicApp {
                                     }
                                 }
                             });
-                         
+
                          ui.add_space(40.0);
                          ui.horizontal(|ui| {
                              if ui.button("⬅ Back").clicked() { self.wizard_step = WizardStep::SelectMic; }
@@ -841,13 +940,13 @@ impl VoidMicApp {
                          ui.heading("🎛️ Calibration");
                          ui.add_space(10.0);
                          ui.label("Stay quiet for 3 seconds to measure background noise.");
-                         
+
                          self.render_volume_meter(ui);
 
                          ui.add_space(20.0);
-                         
+
                          let calibrate_enabled = self.engine.is_some() && !self.is_calibrating;
-                         
+
                          if self.engine.is_none() {
                              if ui.button("▶ Start Audio Engine").clicked() {
                                  self.start_engine();
@@ -883,7 +982,6 @@ impl VoidMicApp {
              });
         });
     }
-
 }
 
 impl eframe::App for VoidMicApp {
@@ -943,11 +1041,11 @@ impl eframe::App for VoidMicApp {
         }
 
         if self.config.mini_mode {
-             if !self.render_mini(ctx) {
-                 // Shrink window if not expanding
-                 ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize([150.0, 150.0].into()));
-             }
-             return;
+            if !self.render_mini(ctx) {
+                // Shrink window if not expanding
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize([150.0, 150.0].into()));
+            }
+            return;
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {

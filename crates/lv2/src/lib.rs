@@ -31,11 +31,11 @@ impl Plugin for VoidMic {
 
     fn new(_info: &PluginInfo, _features: &mut ()) -> Option<Self> {
         let processor = VoidProcessor::new(
-            2,              // Channels: Stereo
-            2,              // VAD sensitivity: Aggressive
+            2,               // Channels: Stereo
+            2,               // VAD sensitivity: Aggressive
             (0.0, 0.0, 0.0), // No EQ default
-            0.7,            // AGC Target
-            false,          // Echo Cancel disabled
+            0.7,             // AGC Target
+            false,           // Echo Cancel disabled
         );
 
         let buffer_size = FRAME_SIZE * 4 * 2;
@@ -59,13 +59,15 @@ impl Plugin for VoidMic {
         let suppression = *ports.suppression;
         let bypass = *ports.bypass > 0.5;
 
-        self.processor.bypass_enabled.store(bypass, Ordering::Relaxed);
+        self.processor
+            .bypass_enabled
+            .store(bypass, Ordering::Relaxed);
         self.processor.process_updates();
 
         // 2. Push Input
         let input_l = ports.input_l.iter();
         let input_r = ports.input_r.iter();
-        
+
         for (l, r) in input_l.zip(input_r) {
             let _ = self.rb_in_prod.push(*l);
             let _ = self.rb_in_prod.push(*r);
@@ -101,15 +103,15 @@ impl Plugin for VoidMic {
         // 4. Fill Output
         let output_l = ports.output_l.iter_mut();
         let output_r = ports.output_r.iter_mut();
-        
+
         for (l, r) in output_l.zip(output_r) {
-             if self.rb_out_cons.len() >= 2 {
-                 *l = self.rb_out_cons.pop().unwrap_or(0.0);
-                 *r = self.rb_out_cons.pop().unwrap_or(0.0);
-             } else {
-                 *l = 0.0;
-                 *r = 0.0;
-             }
+            if self.rb_out_cons.len() >= 2 {
+                *l = self.rb_out_cons.pop().unwrap_or(0.0);
+                *r = self.rb_out_cons.pop().unwrap_or(0.0);
+            } else {
+                *l = 0.0;
+                *r = 0.0;
+            }
         }
     }
 }

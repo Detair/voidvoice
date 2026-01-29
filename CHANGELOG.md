@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.9.4] - 2026-01-29
+### 🔧 Maintenance
+- **Formatting**: Fixed trailing whitespace in GUI code that caused CI failures.
+
 ## [0.9.3] - 2026-01-29
 ### ⚡ Performance
 - **Zero Allocations**: Refactored `NoiseFloorTracker` to use fixed-size ring buffer.
