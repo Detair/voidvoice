@@ -35,10 +35,10 @@ pub struct AudioEngine {
     pub eq_high_gain: Arc<AtomicU32>,
     
     pub agc_enabled: Arc<AtomicBool>,
-    pub agc_target: Arc<AtomicU32>,
+    pub _agc_target: Arc<AtomicU32>, // Kept for potential GUI control
     pub bypass_enabled: Arc<AtomicBool>,
     pub jitter_max_us: Arc<AtomicU32>,
-    pub spectrum_sender: Option<Sender<(Vec<f32>, Vec<f32>)>>,
+    pub _spectrum_sender: Option<Sender<(Vec<f32>, Vec<f32>)>>,
 }
 
 impl AudioEngine {
@@ -242,9 +242,9 @@ impl AudioEngine {
             eq_mid_gain: eq_mid_atomic,
             eq_high_gain: eq_high_atomic,
             agc_enabled: agc_enabled_atomic,
-            agc_target: agc_target_atomic,
+            _agc_target: agc_target_atomic,
             bypass_enabled: bypass_enabled_atomic,
-            spectrum_sender, 
+            _spectrum_sender: spectrum_sender, 
             jitter_max_us: jitter_atomic,
         })
     }

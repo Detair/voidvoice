@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.9.2] - 2026-01-29
+### 🐛 Fixes
+- **Code Quality**: Removed/silenced unused fields for a cleaner build log.
+
 ## [0.9.1] - 2026-01-29
 ### 🐛 Fixes
 - **CI/CD**: Added missing `libx11-xcb-dev` dependency to build workflows to fix Linux build failures.

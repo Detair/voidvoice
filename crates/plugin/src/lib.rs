@@ -11,7 +11,7 @@ use voidmic_ui::{theme, visualizer, widgets as ui_widgets};
 
 struct VoidMicPlugin {
     params: Arc<VoidMicParams>,
-    editor_state: Arc<EguiState>,
+    // editor_state removed as it is in params
     
     // Audio Processing State
     processor: Option<VoidProcessor>,
@@ -56,7 +56,6 @@ impl Default for VoidMicPlugin {
     fn default() -> Self {
         Self {
             params: Arc::new(VoidMicParams::default()),
-            editor_state: EguiState::from_size(450, 450),
             processor: None,
             rb_in_prod: None,
             rb_in_cons: None,
