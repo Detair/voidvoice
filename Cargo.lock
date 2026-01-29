@@ -809,6 +809,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b35204fbdc0b3f4446b89fc1ac2cf84a8a68971995d0bf2e925ec7cd960f9cb3"
 
 [[package]]
+name = "cache-padded"
+version = "1.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "981520c98f422fcc584dc1a95c334e6953900b9106bc47a9839b81790009eb21"
+
+[[package]]
 name = "cairo-rs"
 version = "0.18.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4357,6 +4363,15 @@ dependencies = [
 
 [[package]]
 name = "ringbuf"
+version = "0.2.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f65af18d50f789e74aaf23bbb3f65dcd22a3cb6e029b5bced149f6bd57c5c2a2"
+dependencies = [
+ "cache-padded",
+]
+
+[[package]]
+name = "ringbuf"
 version = "0.4.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fe47b720588c8702e34b5979cb3271a8b1842c7cb6f57408efa70c779363488c"
@@ -5449,7 +5464,7 @@ dependencies = [
  "muda",
  "open",
  "reqwest",
- "ringbuf",
+ "ringbuf 0.4.8",
  "semver",
  "serde",
  "serde_json",
@@ -5475,7 +5490,9 @@ dependencies = [
 name = "voidmic_plugin"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "nih_plug",
+ "ringbuf 0.2.8",
  "voidmic_core",
 ]
 

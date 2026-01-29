@@ -9,3 +9,5 @@ crate-type = ["cdylib"]
 [dependencies]
 voidmic_core = { path = "../core" }
 nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git" }
+ringbuf = "0.2.8"
+anyhow = "1.0"

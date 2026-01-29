@@ -206,8 +206,6 @@ pub struct VoidProcessor {
     bypass_state: BypassState,
     crossfade_pos: u32,
     calibration_samples: Vec<f32>,
-    max_jitter_us: u32,
-    frames_since_jitter_reset: u32,
     
     // Current Settings (Locally cached to avoid atomic load every sample)
     current_vad_mode: i32,
@@ -266,8 +264,6 @@ impl VoidProcessor {
             bypass_state: BypassState::Active,
             crossfade_pos: 0,
             calibration_samples: Vec::new(),
-            max_jitter_us: 0,
-            frames_since_jitter_reset: 0,
 
             current_vad_mode: vad_sensitivity,
             current_eq_low: eq_params.0,
