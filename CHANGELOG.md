@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.3] - 2026-01-29
+### ⚡ Performance
+- **Zero Allocations**: Refactored `NoiseFloorTracker` to use fixed-size ring buffer.
+- **Pre-allocated Buffers**: Spectrum analyzer and calibration now use pre-allocated buffers.
+
 ## [0.9.2] - 2026-01-29
 ### 🐛 Fixes
 - **Code Quality**: Removed/silenced unused fields for a cleaner build log.

@@ -6,7 +6,6 @@ use nnnoiseless::DenoiseState;
 use spectrum_analyzer::{samples_fft_to_spectrum, FrequencyLimit};
 use spectrum_analyzer::scaling::divide_by_N_sqrt;
 use spectrum_analyzer::windows::hann_window;
-use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use webrtc_vad::{Vad, VadMode};
@@ -18,32 +17,47 @@ const RELEASE_MS: u32 = 200;
 const FADE_MS: u32 = 10;
 
 /// Tracks minimum RMS over a sliding window to estimate noise floor.
+/// Uses a fixed-size ring buffer to avoid allocations.
 pub struct NoiseFloorTracker {
-    window: VecDeque<f32>,
-    window_size: usize,
+    window: [f32; 300], // Fixed 3s @ 100 frames/sec
+    write_idx: usize,
+    count: usize,
     current_floor: f32,
 }
 
 impl NoiseFloorTracker {
-    pub fn new(window_seconds: f32) -> Self {
-        let window_size = (window_seconds * 100.0) as usize;
+    pub fn new(_window_seconds: f32) -> Self {
         Self {
-            window: VecDeque::with_capacity(window_size),
-            window_size,
+            window: [0.0; 300],
+            write_idx: 0,
+            count: 0,
             current_floor: 0.01,
         }
     }
 
     pub fn update(&mut self, rms: f32) {
-        self.window.push_back(rms);
-        if self.window.len() > self.window_size {
-            self.window.pop_front();
+        self.window[self.write_idx] = rms;
+        self.write_idx = (self.write_idx + 1) % 300;
+        if self.count < 300 {
+            self.count += 1;
         }
-        if self.window.len() >= 10 {
-            let mut sorted: Vec<f32> = self.window.iter().cloned().collect();
-            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
-            let idx = sorted.len() / 10;
-            self.current_floor = sorted[idx];
+        
+        // Find 10th percentile without allocation
+        // Simple approach: track running minimum with decay
+        if self.count >= 10 {
+            // Find minimum in recent samples (last 30 = ~300ms)
+            let start = if self.count >= 30 { self.write_idx.wrapping_sub(30) % 300 } else { 0 };
+            let mut min_val = f32::MAX;
+            for i in 0..30.min(self.count) {
+                let idx = (start + i) % 300;
+                if self.window[idx] < min_val && self.window[idx] > 0.0001 {
+                    min_val = self.window[idx];
+                }
+            }
+            if min_val < f32::MAX {
+                // Smooth transition
+                self.current_floor = self.current_floor * 0.95 + min_val * 0.05;
+            }
         }
     }
 
@@ -244,6 +258,10 @@ pub struct VoidProcessor {
     pub bypass_enabled: Arc<AtomicBool>,
     pub jitter_max_us: Arc<AtomicU32>,
     pub spectrum_sender: Option<Sender<(Vec<f32>, Vec<f32>)>>,
+    
+    // Pre-allocated spectrum buffers (avoid allocations in audio thread)
+    spectrum_in_buf: Vec<f32>,
+    spectrum_out_buf: Vec<f32>,
 }
 
 // Safety: VoidProcessor owns all its raw pointers (Vad, EchoCanceller) and is moved to a single thread.
@@ -298,7 +316,7 @@ impl VoidProcessor {
             fade_position: 0,
             bypass_state: BypassState::Active,
             crossfade_pos: 0,
-            calibration_samples: Vec::new(),
+            calibration_samples: Vec::with_capacity(300), // Pre-alloc for ~3s calibration
 
             current_vad_mode: vad_sensitivity,
             current_eq_low: eq_params.0,
@@ -317,6 +335,9 @@ impl VoidProcessor {
             bypass_enabled: Arc::new(AtomicBool::new(false)),
             jitter_max_us: Arc::new(AtomicU32::new(0)),
             spectrum_sender: None,
+            // Pre-allocate spectrum buffers (FRAME_SIZE/2 bins typical for FFT)
+            spectrum_in_buf: Vec::with_capacity(FRAME_SIZE / 2),
+            spectrum_out_buf: Vec::with_capacity(FRAME_SIZE / 2),
         }
     }
 
@@ -574,7 +595,7 @@ impl VoidProcessor {
             _ => {}
         }
 
-        // Spectrum Analysis (On Mono Mix)
+        // Spectrum Analysis (On Mono Mix) - uses pre-allocated buffers
         if let Some(sender) = &self.spectrum_sender {
             // Need Input Mono Mix too
             let mut input_mono = [0.0f32; FRAME_SIZE];
@@ -602,9 +623,19 @@ impl VoidProcessor {
             ).ok();
 
             if let (Some(in_spec), Some(out_spec)) = (input_spectrum, output_spectrum) {
-                 let in_mags: Vec<f32> = in_spec.data().iter().map(|(_, val)| val.val()).collect();
-                 let out_mags: Vec<f32> = out_spec.data().iter().map(|(_, val)| val.val()).collect();
-                 let _ = sender.try_send((in_mags, out_mags));
+                 // Reuse pre-allocated buffers
+                 self.spectrum_in_buf.clear();
+                 self.spectrum_out_buf.clear();
+                 
+                 for (_, val) in in_spec.data().iter() {
+                     self.spectrum_in_buf.push(val.val());
+                 }
+                 for (_, val) in out_spec.data().iter() {
+                     self.spectrum_out_buf.push(val.val());
+                 }
+                 
+                 // Clone to send (channel requires owned data)
+                 let _ = sender.try_send((self.spectrum_in_buf.clone(), self.spectrum_out_buf.clone()));
             }
         }
     }
