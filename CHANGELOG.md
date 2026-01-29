@@ -1,0 +1,23 @@
+# Changelog
+
+## [0.9.0] - 2026-01-29
+
+### 🚀 Major Features
+- **Stereo Support**: `VoidProcessor` is now fully stereo-aware, with linked VAD/Gate and independent Denoise/EQ per channel.
+- **Plugin Ecosystem**: Added **VST3**, **CLAP**, and **LV2** plugin targets.
+- **One-Click Setup**: New "Create Virtual Mic" button in the GUI automates audio routing on Linux (PulseAudio/PipeWire).
+- **First-Run Wizard**: Integrated setup flow for new users.
+
+### 🎨 Visual & UI
+- **Deep Void Theme**: New premium dark theme with rounded corners and consistent styling.
+- **Visual Assets**: Updated App Icon and added Hero Banner.
+- **Spectrum Visualizer**: Real-time frequency analysis in both App and Plugin.
+
+### 🛠️ Technical
+- **Workspace Architecture**: Refactored into `core`, `app`, `ui`, `plugin`, `lv2`.
+- **Packaging**: CI pipelines now generate `.deb`, `.rpm`, `AppImage`, and plugin bundles.
+- **Developer Experience**: Added `scripts/setup_dev.sh` with support for Debian, Fedora, and Fedora Atomic (Toolbox).
+
+### 🐛 Fixes
+- Fixed potential mono-summing issues in previous alpha builds.
+- Improved hot-plug resilience for audio devices.
