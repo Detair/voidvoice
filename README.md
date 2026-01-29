@@ -1,5 +1,7 @@
 # VoidMic 🌌 (Hybrid Edition)
 
+![VoidMic Hero Banner](assets/hero_banner.png)
+
 [![CI](https://github.com/Detair/voidvoice/actions/workflows/ci.yml/badge.svg)](https://github.com/Detair/voidvoice/actions/workflows/ci.yml)
 [![Release](https://github.com/Detair/voidvoice/actions/workflows/release.yml/badge.svg)](https://github.com/Detair/voidvoice/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
