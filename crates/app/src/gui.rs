@@ -16,6 +16,8 @@ use tray_icon::{
 };
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager};
 use global_hotkey::hotkey::HotKey;
+use egui_plot::{Line, Plot, PlotPoints};
+use crossbeam_channel::Receiver;
 
 /// Runs the VoidMic GUI application.
 ///
@@ -144,6 +146,9 @@ struct VoidMicApp {
     // Wizard State
     show_wizard: bool,
     wizard_step: WizardStep,
+    // Phase 6
+    spectrum_receiver: Option<Receiver<(Vec<f32>, Vec<f32>)>>,
+    last_spectrum_data: (Vec<f32>, Vec<f32>), // Cache for rendering
 }
 
 const QUIT_ID: &str = "quit";
@@ -222,6 +227,8 @@ impl VoidMicApp {
             hotkey_id: None,
             show_wizard,
             wizard_step: WizardStep::Welcome,
+            spectrum_receiver: None,
+            last_spectrum_data: (Vec::new(), Vec::new()),
         };
 
         // Register Hotkey
@@ -246,18 +253,32 @@ impl VoidMicApp {
             return; // Already running
         }
 
+        let (tx, rx) = crossbeam_channel::bounded(2);
+
         match AudioEngine::start(
             &self.selected_input,
             &self.selected_output,
             &self.model_path,
             self.config.gate_threshold,
             self.config.suppression_strength,
-            self.config.dynamic_threshold_enabled,
-            None,
             self.config.echo_cancel_enabled,
+            None,
+            self.config.dynamic_threshold_enabled,
+            self.config.vad_sensitivity,
+            self.config.eq_enabled,
+            (
+                self.config.eq_low_gain,
+                self.config.eq_mid_gain,
+                self.config.eq_high_gain,
+            ),
+            self.config.agc_enabled,
+            self.config.agc_target_level,
+            false,
+            Some(tx), // Phase 6 Spectrum
         ) {
             Ok(engine) => {
                 self.engine = Some(engine);
+                self.spectrum_receiver = Some(rx);
                 self.status_msg = "Running".to_string();
             }
             Err(e) => {
@@ -588,6 +609,211 @@ impl VoidMicApp {
                 ui.label(egui::RichText::new("ℹ️ Select speaker monitor").size(10.0));
             });
         }
+
+        ui.separator();
+        
+        // VAD Controls
+        ui.horizontal(|ui| {
+            ui.label("VAD Sensitivity:");
+            egui::ComboBox::from_id_source("vad_combo")
+                .selected_text(match self.config.vad_sensitivity {
+                    0 => "Quality (Likely Speech)",
+                    1 => "Low Bitrate",
+                    2 => "Aggressive",
+                    3 => "Very Aggressive",
+                    _ => "Unknown",
+                })
+                .show_ui(ui, |ui| {
+                    let mut changed = false;
+                    if ui.selectable_value(&mut self.config.vad_sensitivity, 0, "Quality").clicked() { changed = true; }
+                    if ui.selectable_value(&mut self.config.vad_sensitivity, 1, "Low Bitrate").clicked() { changed = true; }
+                    if ui.selectable_value(&mut self.config.vad_sensitivity, 2, "Aggressive").clicked() { changed = true; }
+                    if ui.selectable_value(&mut self.config.vad_sensitivity, 3, "Very Aggressive").clicked() { changed = true; }
+                    
+                    if changed {
+                        self.mark_config_dirty();
+                        if let Some(engine) = &self.engine {
+                            engine.vad_sensitivity.store(self.config.vad_sensitivity as u32, Ordering::Relaxed);
+                        }
+                    }
+                });
+            ui.label(egui::RichText::new("ℹ️ WebRTC Voice Activity Detection").size(10.0));
+        });
+
+        ui.separator();
+
+        // Equalizer Controls
+        ui.horizontal(|ui| {
+            if ui.checkbox(&mut self.config.eq_enabled, "Equalizer (3-Band)").changed() {
+                self.mark_config_dirty();
+            }
+        });
+
+        if self.config.eq_enabled {
+            ui.horizontal(|ui| {
+                ui.label("Low (Bass):");
+                if ui.add(egui::Slider::new(&mut self.config.eq_low_gain, -10.0..=10.0).text("dB")).changed() {
+                    self.mark_config_dirty();
+                    if let Some(engine) = &self.engine {
+                         engine.eq_low_gain.store(self.config.eq_low_gain.to_bits(), Ordering::Relaxed);
+                    }
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label("Mid (Voice):");
+                if ui.add(egui::Slider::new(&mut self.config.eq_mid_gain, -10.0..=10.0).text("dB")).changed() {
+                    self.mark_config_dirty();
+                    if let Some(engine) = &self.engine {
+                         engine.eq_mid_gain.store(self.config.eq_mid_gain.to_bits(), Ordering::Relaxed);
+                    }
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label("High (Treble):");
+                if ui.add(egui::Slider::new(&mut self.config.eq_high_gain, -10.0..=10.0).text("dB")).changed() {
+                    self.mark_config_dirty();
+                    if let Some(engine) = &self.engine {
+                         engine.eq_high_gain.store(self.config.eq_high_gain.to_bits(), Ordering::Relaxed);
+                    }
+                }
+            });
+        }
+
+        // Phase 4: Pro Audio (AGC + Bypass)
+        ui.separator();
+        
+        ui.horizontal(|ui| {
+             if ui.checkbox(&mut self.config.agc_enabled, "Automatic Gain Control (AGC)").changed() {
+                self.mark_config_dirty();
+                 if let Some(engine) = &self.engine {
+                    engine.agc_enabled.store(self.config.agc_enabled, Ordering::Relaxed);
+                 }
+             }
+             ui.label(egui::RichText::new("ℹ️ Keeps volume consistent").size(10.0));
+        });
+
+        ui.add_space(5.0);
+        
+        // BIG BYPASS BUTTON
+        let bypass_enabled = if let Some(engine) = &self.engine {
+             engine.bypass_enabled.load(Ordering::Relaxed)
+        } else { false };
+        let bypass_text = if bypass_enabled { "🔴 BYPASSED (Raw Audio)" } else { "🟢 Processing Active" };
+        if ui.add_sized([ui.available_width(), 30.0], egui::Button::new(egui::RichText::new(bypass_text).strong().size(14.0)).fill(if bypass_enabled { egui::Color32::DARK_RED } else { egui::Color32::DARK_GREEN })).clicked() {
+             if let Some(engine) = &self.engine {
+                 let current = engine.bypass_enabled.load(Ordering::Relaxed);
+                 engine.bypass_enabled.store(!current, Ordering::Relaxed);
+             }
+        }
+        // Spectrum Visualizer (Phase 6)
+        if self.engine.is_some() {
+             ui.add_space(10.0);
+             ui.label("📊 Spectrum Analysis");
+             self.render_spectrum(ui);
+             
+             // Jitter Monitor (Phase 6)
+             let jitter = self.engine.as_ref().unwrap().jitter_max_us.load(Ordering::Relaxed);
+             ui.add_space(5.0);
+             ui.horizontal(|ui| {
+                ui.label("Latency Health:");
+                let color = if jitter < 1000 { egui::Color32::GREEN } 
+                           else if jitter < 5000 { egui::Color32::YELLOW } 
+                           else { egui::Color32::RED };
+                ui.colored_label(color, format!("{} µs jitter (Max)", jitter));
+             });
+        }
+    }
+
+    fn render_spectrum(&mut self, ui: &mut egui::Ui) {
+         // Receive new data
+         if let Some(rx) = &self.spectrum_receiver {
+             // Drain channel to get latest
+             while let Ok(data) = rx.try_recv() {
+                 self.last_spectrum_data = data;
+             }
+         }
+
+         let (in_data, out_data) = &self.last_spectrum_data;
+         if in_data.is_empty() {
+             ui.label("Waiting for audio...");
+             return;
+         }
+
+         // Prepare plot lines
+         // Map index to approx frequency. 480 bins -> 0..24kHz?
+         // samples_fft_to_spectrum gives bins based on window size.
+         // If we sent raw magnitudes, we need to know the frequency mapping.
+         // For now, just plot index 0..N
+         
+         let red_line = Line::new(PlotPoints::from_ys_f32(in_data))
+             .color(egui::Color32::from_rgba_premultiplied(100, 0, 0, 100))
+             .fill(0.0); // Fill input (noise) with red/grey
+
+         let green_line = Line::new(PlotPoints::from_ys_f32(out_data))
+             .color(egui::Color32::GREEN)
+             .width(2.0); // Clean output
+
+         Plot::new("spectrum")
+             .height(100.0)
+             .show_axes([false, false])
+             .show_grid([false, false])
+             .allow_drag(false)
+             .allow_zoom(false)
+             .show(ui, |plot_ui| {
+                 plot_ui.line(red_line);
+                 plot_ui.line(green_line);
+             });
+    }
+
+
+    fn render_mini(&mut self, ctx: &egui::Context) -> bool {
+         let mut expanded = false;
+         egui::CentralPanel::default().show(ctx, |ui| {
+             ui.vertical_centered(|ui| {
+                 ui.add_space(5.0);
+                 ui.horizontal(|ui| {
+                      ui.label("🌌 VoidMic");
+                      ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                          if ui.button("⛶").on_hover_text("Expand").clicked() {
+                              self.config.mini_mode = false;
+                              self.mark_config_dirty();
+                              expanded = true;
+                              ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize([450.0, 450.0].into()));
+                          }
+                      });
+                 });
+                 
+                 ui.separator();
+                 
+                 // Status
+                 let active = self.engine.is_some();
+                 ui.colored_label(
+                     if active { egui::Color32::GREEN } else { egui::Color32::RED },
+                     if active { "Active" } else { "Inactive" }
+                 );
+                 
+                 ui.add_space(5.0);
+                 
+                 // Bypass Button (Big)
+                 let bypass_enabled = if let Some(engine) = &self.engine {
+                      engine.bypass_enabled.load(Ordering::Relaxed)
+                 } else { false };
+                 
+                 let btn_color = if bypass_enabled { egui::Color32::DARK_RED } else { egui::Color32::DARK_GREEN };
+                 let btn_text = if bypass_enabled { "Stopped" } else { "Processing" };
+                 
+                 if ui.add_sized([80.0, 30.0], egui::Button::new(btn_text).fill(btn_color)).clicked() {
+                      if let Some(engine) = &self.engine {
+                          let current = engine.bypass_enabled.load(Ordering::Relaxed);
+                          engine.bypass_enabled.store(!current, Ordering::Relaxed);
+                      }
+                 }
+                 
+                 ui.add_space(5.0);
+                 self.render_volume_meter(ui);
+             });
+         });
+         expanded
     }
 
     fn render_wizard(&mut self, ctx: &egui::Context) {
@@ -759,6 +985,14 @@ impl eframe::App for VoidMicApp {
             return;
         }
 
+        if self.config.mini_mode {
+             if !self.render_mini(ctx) {
+                 // Shrink window if not expanding
+                 ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize([150.0, 150.0].into()));
+             }
+             return;
+        }
+
         egui::CentralPanel::default().show(ctx, |ui| {
             // Update banner at top
             if self.render_update_banner(ui) {
@@ -766,7 +1000,15 @@ impl eframe::App for VoidMicApp {
             }
 
             ui.heading("VoidMic 🌌");
-            ui.label(egui::RichText::new("Hybrid Noise Reduction (RNNoise + Gate)").size(10.0).weak());
+            ui.horizontal(|ui| {
+                 ui.label(egui::RichText::new("Hybrid Noise Reduction").size(10.0).weak());
+                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                     if ui.button("➖").on_hover_text("Compact Mode").clicked() {
+                         self.config.mini_mode = true;
+                         self.mark_config_dirty();
+                     }
+                 });
+            });
             ui.separator();
             ui.add_space(10.0);
 
@@ -878,7 +1120,22 @@ impl eframe::App for VoidMicApp {
                         self.config.suppression_strength,
                         self.config.echo_cancel_enabled,
                         if self.config.echo_cancel_enabled { Some(&self.selected_reference) } else { None },
-                        self.config.dynamic_threshold_enabled
+                        self.config.dynamic_threshold_enabled,
+                        self.config.vad_sensitivity,
+                        self.config.eq_enabled,
+                        (
+                            self.config.eq_low_gain,
+                            self.config.eq_mid_gain,
+                            self.config.eq_high_gain,
+                        ),
+                        self.config.agc_enabled,
+                        self.config.agc_target_level,
+                        false, // Bypass disabled on start
+                        {
+                             let (tx, rx) = crossbeam_channel::bounded(2);
+                             self.spectrum_receiver = Some(rx);
+                             Some(tx)
+                        }
                     ) {
                         Ok(engine) => {
                             self.engine = Some(engine);

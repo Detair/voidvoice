@@ -1,40 +1,8 @@
-[package]
-name = "voidmic"
-version = "0.8.0"
-edition = "2021"
-authors = ["Detair"]
-description = "Hybrid AI Noise Reduction (RNNoise + Smart Gate)"
-license = "MIT"
-repository = "https://github.com/Detair/voidvoice"
-readme = "README.md"
-keywords = ["audio", "noise-cancellation", "rnnoise", "gaming"]
-categories = ["multimedia::audio", "command-line-utilities"]
+[workspace]
+members = ["crates/app", "crates/core", "crates/plugin"]
+resolver = "2"
 
-[dependencies]
-nnnoiseless = "0.5.1"
-cpal = "0.15.3"
-ringbuf = "0.4.7"
-clap = { version = "4.5", features = ["derive"] }
-anyhow = "1.0"
-log = "0.4"
-env_logger = "0.11"
-open = "5.1"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-directories = "5.0"
-ctrlc = "3.4"
-dirs = "6.0.0"
-reqwest = { version = "0.13.1", features = ["blocking", "json"] }
-semver = "1.0.27"
-
-# GUI dependencies (optional for headless mode)
-eframe = { version = "0.26", optional = true }
-tray-icon = { version = "0.21.3", default-features = false, optional = true }
-muda = { version = "0.17.1", default-features = false, features = ["gtk"], optional = true }
-aec3 = "0.1.3"
-global-hotkey = "0.7.0"
-image = { version = "0.24", default-features = false, features = ["png"] }
-
-[features]
-default = ["gui"]
-gui = ["eframe", "tray-icon", "muda"]
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

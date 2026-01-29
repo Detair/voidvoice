@@ -36,6 +36,34 @@ pub struct AppConfig {
     pub toggle_hotkey: String,
     #[serde(default = "default_first_run")]
     pub first_run: bool,
+    #[serde(default = "default_vad_sensitivity")]
+    pub vad_sensitivity: i32,
+    #[serde(default)]
+    pub eq_enabled: bool,
+    #[serde(default)]
+    pub eq_low_gain: f32, // dB
+    #[serde(default)]
+    pub eq_mid_gain: f32, // dB
+    #[serde(default)]
+    pub eq_high_gain: f32, // dB
+    
+    // Phase 4 field
+    #[serde(default)]
+    pub agc_enabled: bool,
+    #[serde(default = "default_agc_target")]
+    pub agc_target_level: f32,
+
+    // Phase 6
+    #[serde(default)]
+    pub mini_mode: bool,
+}
+
+fn default_agc_target() -> f32 {
+    0.7 // Approx -3dB
+}
+
+fn default_vad_sensitivity() -> i32 {
+    2 // 0-3, 3 is most aggressive
 }
 
 fn default_first_run() -> bool {
@@ -81,6 +109,14 @@ impl Default for AppConfig {
             preset: default_preset(),
             toggle_hotkey: default_toggle_hotkey(),
             first_run: true,
+            vad_sensitivity: default_vad_sensitivity(),
+            eq_enabled: false,
+            eq_low_gain: 0.0,
+            eq_mid_gain: 0.0,
+            eq_high_gain: 0.0,
+            agc_enabled: false,
+            agc_target_level: default_agc_target(),
+            mini_mode: false,
         }
     }
 }
@@ -148,11 +184,18 @@ mod tests {
             preset: "Gaming".to_string(),
             toggle_hotkey: "Control+Shift+M".to_string(),
             first_run: true,
+            vad_sensitivity: 2,
+            eq_enabled: true,
+            eq_low_gain: 3.0,
+            eq_mid_gain: -1.0,
+            eq_high_gain: 0.0,
         };
 
         let json = serde_json::to_string(&config).unwrap();
         assert!(json.contains("\"gate_threshold\":0.02"));
         assert!(json.contains("\"echo_cancel_enabled\":true"));
+        assert!(json.contains("\"vad_sensitivity\":2"));
+        assert!(json.contains("\"eq_enabled\":true"));
     }
 
     #[test]
@@ -186,6 +229,11 @@ mod tests {
             preset: "Podcast".to_string(),
             toggle_hotkey: "Control+Shift+K".to_string(),
             first_run: false,
+            vad_sensitivity: 3,
+            eq_enabled: false,
+            eq_low_gain: 0.0,
+            eq_mid_gain: 0.0,
+            eq_high_gain: 0.0,
         };
 
         let json = serde_json::to_string(&original).unwrap();

@@ -1,0 +1,42 @@
+app-id: com.detair.voidmic
+runtime: org.freedesktop.Platform
+runtime-version: '23.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+
+command: voidmic
+finish-args:
+  # X11 + Wayland (via XWayland or native if supported later)
+  - --socket=x11
+  - --share=ipc
+  # Audio access (PulseAudio/PipeWire)
+  - --socket=pulseaudio
+  # Network access (for updates if needed, though mostly local)
+  - --share=network
+  # GPU access (for GUI rendering)
+  - --device=dri
+  # Filesystem access (optional, usually not needed if self-contained)
+  # - --filesystem=home
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/voidmic/cargo
+
+modules:
+  - name: voidmic
+    buildsystem: simple
+    build-commands:
+      - cargo build --release --offline
+      - install -D target/release/voidmic /app/bin/voidmic
+      - install -D assets/voidmic.desktop /app/share/applications/com.detair.voidmic.desktop
+      - install -D assets/icon_32.png /app/share/icons/hicolor/32x32/apps/com.detair.voidmic.png
+      - install -D assets/logo_256.png /app/share/icons/hicolor/256x256/apps/com.detair.voidmic.png
+    sources:
+      - type: dir
+        path: .
+    # Note: For strict offline builds, you would need to vendor dependencies here.
+    # For now, we assume 'cargo vendor' has been run or network is shared during build.
+    # To enable network during build for flatpak-builder:
+    # flatpak-builder --share=network build-dir com.detair.voidmic.yml

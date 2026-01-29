@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=VoidMic
+Comment=Hybrid AI Noise Reduction & Smart Gate
+Exec=voidmic
+Icon=voidmic
+Terminal=false
+Type=Application
+Categories=AudioVideo;Audio;Recorder;
+Keywords=noise;voice;mic;ai;rnnoise;
+StartupNotify=true

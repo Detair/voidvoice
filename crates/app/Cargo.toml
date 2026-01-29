@@ -1,0 +1,39 @@
+[package]
+name = "voidmic_app"
+version = "0.8.0"
+edition = "2021"
+default-run = "voidmic_app"
+
+[[bin]]
+name = "voidmic_app"
+path = "src/main.rs"
+
+[dependencies]
+voidmic_core = { path = "../core" }
+cpal = "0.15.3"
+ringbuf = "0.4.7"
+clap = { version = "4.5", features = ["derive"] }
+anyhow = "1.0"
+log = "0.4"
+env_logger = "0.11"
+open = "5.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+directories = "5.0"
+ctrlc = "3.4"
+dirs = "6.0.0"
+reqwest = { version = "0.13.1", features = ["blocking", "json"] }
+semver = "1.0.27"
+
+# GUI dependencies
+eframe = { version = "0.26", optional = true }
+tray-icon = { version = "0.21.3", default-features = false, optional = true }
+muda = { version = "0.17.1", default-features = false, features = ["gtk"], optional = true }
+global-hotkey = "0.7.0"
+image = { version = "0.24", default-features = false, features = ["png"] }
+crossbeam-channel = "0.5.15" # Needed for receiving from core
+egui_plot = "0.26.2"
+
+[features]
+default = ["gui"]
+gui = ["eframe", "tray-icon", "muda"]
