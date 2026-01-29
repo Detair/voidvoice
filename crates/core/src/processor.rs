@@ -153,12 +153,26 @@ impl LookaheadLimiter {
         }
     }
 
-    pub fn process_frame(&mut self, frame: &mut [f32]) {
-        let sum: f32 = frame.iter().map(|x| x * x).sum();
-        let rms = (sum / frame.len() as f32).sqrt();
+    pub fn process_frame(&mut self, frames: &mut [&mut [f32]]) {
+        if frames.is_empty() { return; }
+        
+        // Calculate max RMS across all channels for linked limiting
+        let frame_len = frames[0].len();
+        let mut sum_sq = 0.0;
+        // Average energy across all channels first? Or max energy?
+        // Standard "Link" usually takes the max level of any channel.
+        
+        for k in 0..frame_len {
+            let mut sample_max = 0.0f32;
+            for channel in frames.iter() {
+                sample_max = sample_max.max(channel[k].abs());
+            }
+            sum_sq += sample_max * sample_max;
+        }
+        let max_rms = (sum_sq / frame_len as f32).sqrt();
 
-        if rms > 0.0001 {
-            let error = self.target_level / rms;
+        if max_rms > 0.0001 {
+            let error = self.target_level / max_rms;
             let target_gain = if error < 1.0 {
                 error
             } else {
@@ -176,9 +190,12 @@ impl LookaheadLimiter {
              }
         }
 
-        for sample in frame.iter_mut() {
-            let val = *sample * self.current_gain;
-            *sample = val.clamp(-0.99, 0.99);
+        // Apply gain to all channels
+        for channel in frames.iter_mut() {
+            for sample in channel.iter_mut() {
+                let val = *sample * self.current_gain;
+                *sample = val.clamp(-0.99, 0.99);
+            }
         }
     }
 }
@@ -191,12 +208,13 @@ pub enum BypassState {
 }
 
 pub struct VoidProcessor {
-    denoise: Box<DenoiseState<'static>>,
-    echo_canceller: Option<EchoCanceller>,
-    eq: Option<ThreeBandEq>,
+    denoise: Vec<Box<DenoiseState<'static>>>,
+    echo_canceller: Vec<EchoCanceller>,
+    eq: Vec<ThreeBandEq>,
     agc_limiter: LookaheadLimiter,
     noise_floor_tracker: NoiseFloorTracker,
     vad: Vad,
+    channels: usize,
     
     // State
     gate_open: bool,
@@ -231,9 +249,11 @@ pub struct VoidProcessor {
 // Safety: VoidProcessor owns all its raw pointers (Vad, EchoCanceller) and is moved to a single thread.
 // It is not shared between threads (except for the Atomics, which are thread-safe).
 unsafe impl Send for VoidProcessor {}
+unsafe impl Sync for VoidProcessor {}
 
 impl VoidProcessor {
     pub fn new(
+        channels: usize,
         vad_sensitivity: i32,
         eq_params: (f32, f32, f32),
         agc_target_level: f32,
@@ -249,13 +269,28 @@ impl VoidProcessor {
             }
         );
 
+        let mut denoise = Vec::with_capacity(channels);
+        let mut echo_canceller = Vec::with_capacity(channels);
+        let mut eq = Vec::with_capacity(channels);
+
+        for _ in 0..channels {
+             denoise.push(DenoiseState::new());
+             if echo_cancel_enabled {
+                 echo_canceller.push(EchoCanceller::new());
+             }
+             if let Ok(e) = ThreeBandEq::new(eq_params.0, eq_params.1, eq_params.2) {
+                 eq.push(e);
+             }
+        }
+
         Self {
-            denoise: DenoiseState::new(),
-            echo_canceller: if echo_cancel_enabled { Some(EchoCanceller::new()) } else { None },
-            eq: ThreeBandEq::new(eq_params.0, eq_params.1, eq_params.2).ok(),
+            denoise,
+            echo_canceller,
+            eq,
             agc_limiter: LookaheadLimiter::new(agc_target_level),
             noise_floor_tracker: NoiseFloorTracker::new(3.0),
             vad,
+            channels,
             
             gate_open: false,
             samples_since_close: 0,
@@ -302,21 +337,21 @@ impl VoidProcessor {
             );
         }
 
-        if self.eq.is_some() {
+        if !self.eq.is_empty() {
              let new_low = f32::from_bits(self.eq_low_gain.load(Ordering::Relaxed));
              let new_mid = f32::from_bits(self.eq_mid_gain.load(Ordering::Relaxed));
              let new_high = f32::from_bits(self.eq_high_gain.load(Ordering::Relaxed));
              
-             if (new_low - self.current_eq_low).abs() > 0.01 || 
-                (new_mid - self.current_eq_mid).abs() > 0.01 || 
-                (new_high - self.current_eq_high).abs() > 0.01 {
-                    self.current_eq_low = new_low;
-                    self.current_eq_mid = new_mid;
-                    self.current_eq_high = new_high;
-                    if let Some(eq_instance) = &mut self.eq {
-                        let _ = eq_instance.update_gains(new_low, new_mid, new_high);
-                    }
-             }
+            if (new_low - self.current_eq_low).abs() > 0.01 || 
+               (new_mid - self.current_eq_mid).abs() > 0.01 || 
+               (new_high - self.current_eq_high).abs() > 0.01 {
+                   self.current_eq_low = new_low;
+                   self.current_eq_mid = new_mid;
+                   self.current_eq_high = new_high;
+                   for eq_instance in &mut self.eq {
+                       let _ = eq_instance.update_gains(new_low, new_mid, new_high);
+                   }
+            }
         }
 
         // Check Bypass Toggle
@@ -343,45 +378,73 @@ impl VoidProcessor {
 
     pub fn process_frame(
         &mut self, 
-        input_frame: &[f32], 
-        output_frame: &mut [f32], 
-        ref_frame: Option<&[f32]>,
+        input_frames: &[&[f32]], 
+        output_frames: &mut [&mut [f32]], 
+        ref_frames: Option<&[&[f32]]>,
         suppression_strength: f32,
         gate_threshold: f32,
         dynamic_threshold_enabled: bool,
     ) {
-        let mut temp_input = [0.0f32; FRAME_SIZE];
-        temp_input.copy_from_slice(input_frame);
+        let channels = self.channels;
+        assert_eq!(input_frames.len(), channels);
+        assert_eq!(output_frames.len(), channels);
 
+        let mut mono_mix = [0.0f32; FRAME_SIZE];
+        
+        // 1. Process Per-Channel Logic (Echo Cancel, Denoise)
+        for i in 0..channels {
+            let input_ch = input_frames[i];
+            let output_ch = &mut output_frames[i];
+            
+            // Convert input to temp buffer for processing
+            let mut temp_input = [0.0f32; FRAME_SIZE];
+            temp_input.copy_from_slice(input_ch);
+
+            // A. Echo Cancellation
+            if let Some(aec_instance) = self.echo_canceller.get_mut(i) {
+                if let Some(refs) = ref_frames {
+                     // Try to match channel, or use channel 0 if fewer refs
+                     if let Some(ref_ch) = refs.get(i).or(refs.get(0)) {
+                         let processed = aec_instance.process_frame(&temp_input, ref_ch);
+                         temp_input.copy_from_slice(&processed);
+                     }
+                }
+            }
+
+            // B. Denoise (RNNoise)
+            if let Some(denoise_instance) = self.denoise.get_mut(i) {
+                denoise_instance.process_frame(output_ch, &temp_input);
+            }
+
+            // C. Blend (Suppression Strength)
+            for j in 0..FRAME_SIZE {
+                output_ch[j] = temp_input[j] * (1.0 - suppression_strength)
+                    + output_ch[j] * suppression_strength;
+                    
+                // Accumulate to Mono Mix for Gate/VAD analysis
+                mono_mix[j] += output_ch[j];
+            }
+        }
+
+        // 2. Normalize Mono Mix
+        let norm_factor = 1.0 / (channels as f32);
+        for sample in mono_mix.iter_mut() {
+            *sample *= norm_factor;
+        }
+
+        // 3. Linked Gate Analysis (Runs on Mono Mix)
         // Handle Bypass Logic High Level
         let crossfade_len = 480; // 10ms
 
         match self.bypass_state {
             BypassState::Bypassed => {
-                 output_frame.copy_from_slice(input_frame);
+                 for i in 0..channels {
+                     output_frames[i].copy_from_slice(input_frames[i]);
+                 }
             },
             _ => {
-                // Run detailed processing
-                
-                // 1. Echo Cancellation
-                if let (Some(aec), Some(reference)) = (&mut self.echo_canceller, ref_frame) {
-                    if reference.len() == FRAME_SIZE {
-                         let processed = aec.process_frame(&temp_input, reference);
-                         temp_input.copy_from_slice(&processed);
-                    }
-                }
-
-                // 2. Denoise (RNNoise)
-                self.denoise.process_frame(output_frame, &temp_input);
-
-                // 1b. Blend raw and denoised based on suppression strength
-                for i in 0..FRAME_SIZE {
-                    output_frame[i] = temp_input[i] * (1.0 - suppression_strength)
-                        + output_frame[i] * suppression_strength;
-                }
-
-                // 2. Smart Gate Logic
-                let sum: f32 = output_frame.iter().map(|x| x * x).sum();
+                // Analysis
+                let sum: f32 = mono_mix.iter().map(|x| x * x).sum();
                 let rms = (sum / FRAME_SIZE as f32).sqrt();
                 self.volume_level.store(rms.to_bits(), Ordering::Relaxed);
 
@@ -409,7 +472,7 @@ impl VoidProcessor {
 
                 let mut vad_buffer = [0i16; FRAME_SIZE];
                 for i in 0..FRAME_SIZE {
-                    vad_buffer[i] = (temp_input[i] * 32767.0).clamp(-32768.0, 32767.0) as i16;
+                    vad_buffer[i] = (mono_mix[i] * 32767.0).clamp(-32768.0, 32767.0) as i16;
                 }
                 let is_speech = self.vad.is_voice_segment(&vad_buffer).unwrap_or(false);
 
@@ -434,65 +497,95 @@ impl VoidProcessor {
                     }
                 }
 
-                // 3. Apply Gate
-                if !self.gate_open {
-                    for sample in output_frame.iter_mut() {
-                        if self.fade_position < fade_samples {
-                            let fade_gain = 1.0 - (self.fade_position as f32 / fade_samples as f32);
-                            *sample *= fade_gain;
-                            self.fade_position += 1;
-                        } else {
-                            *sample = 0.0;
+                // 4. Apply Gate & EQ & AGC to ALL channels
+                for i in 0..channels {
+                    let output_ch = &mut output_frames[i];
+                    
+                    // Gate
+                    if !self.gate_open {
+                        let mut local_fade = self.fade_position;
+                         for sample in output_ch.iter_mut() {
+                            if local_fade < fade_samples {
+                                let fade_gain = 1.0 - (local_fade as f32 / fade_samples as f32);
+                                *sample *= fade_gain;
+                                local_fade += 1;
+                            } else {
+                                *sample = 0.0;
+                            }
                         }
                     }
-                } else {
-                    self.fade_position = 0;
-                }
 
-                // 4. Equalizer
-                if let Some(eq) = &mut self.eq {
-                    for sample in output_frame.iter_mut() {
-                        *sample = eq.process(*sample);
+                    // Equalizer
+                    if let Some(eq) = self.eq.get_mut(i) {
+                        for sample in output_ch.iter_mut() {
+                            *sample = eq.process(*sample);
+                        }
                     }
                 }
                 
-                // 5. AGC
+                // Update global fade position once
+                 if !self.gate_open {
+                     if self.fade_position < fade_samples {
+                         self.fade_position += FRAME_SIZE as u32; // This is rough, per-sample fade below is better
+                     }
+                 } else {
+                     self.fade_position = 0;
+                 }
+                 
+                // AGC (Linked)
                 if self.agc_enabled.load(Ordering::Relaxed) {
-                    self.agc_limiter.process_frame(output_frame);
+                     self.agc_limiter.process_frame(output_frames);
                 }
             }
         }
         
         // Apply Crossfade transitions
+        let mut t_start = self.crossfade_pos;
         match self.bypass_state {
             BypassState::FadingOut => {
-                for i in 0..FRAME_SIZE {
-                    let t = self.crossfade_pos as f32 / crossfade_len as f32;
+                for j in 0..FRAME_SIZE {
+                    let t = t_start as f32 / crossfade_len as f32;
                     let gain_wet = (t * std::f32::consts::PI / 2.0).cos();
                     let gain_dry = (t * std::f32::consts::PI / 2.0).sin();
-                    output_frame[i] = output_frame[i] * gain_wet + input_frame[i] * gain_dry;
                     
-                    if self.crossfade_pos < crossfade_len { self.crossfade_pos += 1; }
+                    for i in 0..channels {
+                         output_frames[i][j] = output_frames[i][j] * gain_wet + input_frames[i][j] * gain_dry;
+                    }
+                    if t_start < crossfade_len { t_start += 1; }
                 }
+                self.crossfade_pos = t_start;
                 if self.crossfade_pos >= crossfade_len { self.bypass_state = BypassState::Bypassed; }
             },
              BypassState::FadingIn => {
-                for i in 0..FRAME_SIZE {
-                    let t = self.crossfade_pos as f32 / crossfade_len as f32;
+                for j in 0..FRAME_SIZE {
+                    let t = t_start as f32 / crossfade_len as f32;
                     let gain_dry = (t * std::f32::consts::PI / 2.0).cos();
                     let gain_wet = (t * std::f32::consts::PI / 2.0).sin();
-                    output_frame[i] = output_frame[i] * gain_wet + input_frame[i] * gain_dry;
                     
-                    if self.crossfade_pos < crossfade_len { self.crossfade_pos += 1; }
+                    for i in 0..channels {
+                         output_frames[i][j] = output_frames[i][j] * gain_wet + input_frames[i][j] * gain_dry;
+                    }
+                    
+                    if t_start < crossfade_len { t_start += 1; }
                 }
+                self.crossfade_pos = t_start;
                 if self.crossfade_pos >= crossfade_len { self.bypass_state = BypassState::Active; }
             },
             _ => {}
         }
 
-        // Spectrum Analysis
+        // Spectrum Analysis (On Mono Mix)
         if let Some(sender) = &self.spectrum_sender {
-            let window_in = hann_window(input_frame);
+            // Need Input Mono Mix too
+            let mut input_mono = [0.0f32; FRAME_SIZE];
+             for j in 0..FRAME_SIZE {
+                 for i in 0..channels {
+                     input_mono[j] += input_frames[i][j];
+                 }
+                 input_mono[j] *= norm_factor;
+             }
+
+            let window_in = hann_window(&input_mono);
             let input_spectrum = samples_fft_to_spectrum(
                 &window_in,
                 SAMPLE_RATE,
@@ -500,7 +593,7 @@ impl VoidProcessor {
                 Some(&divide_by_N_sqrt),
             ).ok();
 
-            let window_out = hann_window(output_frame);
+            let window_out = hann_window(&mono_mix);
             let output_spectrum = samples_fft_to_spectrum(
                 &window_out,
                 SAMPLE_RATE,

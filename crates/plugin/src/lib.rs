@@ -196,6 +196,7 @@ impl Plugin for VoidMicPlugin {
 
         let processor = VoidProcessor::new(
             2, 
+            2, // VAD Sensitivity (Aggressive)
             (0.0, 0.0, 0.0), 
             0.7,
             false,
@@ -207,7 +208,7 @@ impl Plugin for VoidMicPlugin {
         self.volume_level = processor.volume_level.clone();
         self.processor = Some(processor);
 
-        let buffer_size = FRAME_SIZE * 4;
+        let buffer_size = FRAME_SIZE * 4 * 2; // * 2 for Stereo
         
         // Ringbuf 0.2.8
         let rb_in = RingBuffer::<f32>::new(buffer_size);
@@ -246,32 +247,38 @@ impl Plugin for VoidMicPlugin {
         }
         let num_samples = channel_data[0].len();
         
-        // 1. Push Input
+        // 1. Push Input (Interleaved)
         if let Some(prod_in) = &mut self.rb_in_prod {
              for i in 0..num_samples {
-                 let sample = if num_channels > 1 {
-                     (channel_data[0][i] + channel_data[1][i]) * 0.5
-                 } else {
-                     channel_data[0][i]
-                 };
-                 
-                 let _ = prod_in.push(sample);
+                 if num_channels == 2 {
+                     let _ = prod_in.push(channel_data[0][i]);
+                     let _ = prod_in.push(channel_data[1][i]);
+                 } else if num_channels == 1 {
+                     // Duplicate Mono to Stereo
+                     let val = channel_data[0][i];
+                     let _ = prod_in.push(val);
+                     let _ = prod_in.push(val);
+                 }
              }
         }
 
         // 2. Process chunks
         if let (Some(cons_in), Some(prod_out)) = (&mut self.rb_in_cons, &mut self.rb_out_prod) {
-            let mut input_frame = [0.0f32; FRAME_SIZE];
-            let mut output_frame = [0.0f32; FRAME_SIZE];
+            let mut left_in = [0.0f32; FRAME_SIZE];
+            let mut right_in = [0.0f32; FRAME_SIZE];
+            let mut left_out = [0.0f32; FRAME_SIZE];
+            let mut right_out = [0.0f32; FRAME_SIZE];
             
-            while cons_in.len() >= FRAME_SIZE {
+            // Need 2 * FRAME_SIZE samples for a full stereo frame
+            while cons_in.len() >= FRAME_SIZE * 2 {
                 for j in 0..FRAME_SIZE {
-                     input_frame[j] = cons_in.pop().unwrap_or(0.0);
+                     left_in[j] = cons_in.pop().unwrap_or(0.0);
+                     right_in[j] = cons_in.pop().unwrap_or(0.0);
                 }
                 
                 processor.process_frame(
-                    &input_frame,
-                    &mut output_frame,
+                    &[&left_in, &right_in],
+                    &mut [&mut left_out, &mut right_out],
                     None, 
                     self.params.suppression.value(),
                     self.params.gate_threshold.value(),
@@ -279,7 +286,8 @@ impl Plugin for VoidMicPlugin {
                 );
                 
                 for j in 0..FRAME_SIZE {
-                     let _ = prod_out.push(output_frame[j]);
+                     let _ = prod_out.push(left_out[j]);
+                     let _ = prod_out.push(right_out[j]);
                 }
             }
         }
@@ -287,13 +295,12 @@ impl Plugin for VoidMicPlugin {
         // 3. Output
         if let Some(cons_out) = &mut self.rb_out_cons {
             for i in 0..num_samples {
-                let sample = cons_out.pop().unwrap_or(0.0);
-                
-                if num_channels >= 1 {
-                     channel_data[0][i] = sample;
-                }
-                if num_channels >= 2 {
-                     channel_data[1][i] = sample;
+                if cons_out.len() >= 2 {
+                    let l = cons_out.pop().unwrap_or(0.0);
+                    let r = cons_out.pop().unwrap_or(0.0);
+                    
+                    if num_channels >= 1 { channel_data[0][i] = l; } // If output is mono, take left? Or mix? Left is safer.
+                    if num_channels >= 2 { channel_data[1][i] = r; }
                 }
             }
         }

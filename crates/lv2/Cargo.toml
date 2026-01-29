@@ -1,0 +1,13 @@
+[package]
+name = "voidmic_lv2"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+lv2 = "0.6"
+voidmic_core = { path = "../core" }
+ringbuf = "0.2.8"
+log = "0.4"

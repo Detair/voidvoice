@@ -28,25 +28,26 @@ jobs:
       uses: Swatinem/rust-cache@v2
 
     - name: Build Release
-      run: cargo build --release --verbose
-
+      run: |
+        cargo build --release --workspace
+        
     - name: Install Packaging Tools
       run: |
         cargo install cargo-deb
         cargo install cargo-generate-rpm
 
-    - name: Build Packages
+    - name: Package App (Deb/RPM)
       run: |
-        cargo deb
-        cargo generate-rpm
+        cargo deb -p voidmic_app
+        cargo generate-rpm -p voidmic_app
 
-    - name: Build AppImage
+    - name: Package App (AppImage)
       run: |
         # Structure AppDir
         mkdir -p AppDir/usr/bin
         mkdir -p AppDir/usr/share/applications
         mkdir -p AppDir/usr/share/icons/hicolor/32x32/apps
-        cp target/release/voidmic AppDir/usr/bin/
+        cp target/release/voidmic_app AppDir/usr/bin/voidmic
         cp assets/voidmic.desktop AppDir/usr/share/applications/
         cp assets/icon_32.png AppDir/usr/share/icons/hicolor/32x32/apps/voidmic.png
         
@@ -57,22 +58,37 @@ jobs:
         # Build AppImage
         ./linuxdeploy-x86_64.AppImage --appdir AppDir --output appimage --icon-file assets/icon_32.png --desktop-file assets/voidmic.desktop
 
-    - name: Package Release
+    - name: Package Plugins
       run: |
-        mkdir -p release
-        cp target/release/voidmic release/
-        cd release
-        tar -czvf ../voidmic-linux-x86_64.tar.gz voidmic
+        mkdir -p plugins/VoidMic.vst3/Contents/x86_64-linux
+        mkdir -p plugins/voidmic.lv2
+        
+        # VST3
+        # nih_plug produces a shared library. Rename to .so inside the bundle for VST3.
+        cp target/release/libvoidmic_plugin.so plugins/VoidMic.vst3/Contents/x86_64-linux/VoidMic.so
+        
+        # CLAP
+        # Single file, usually .clap extension
+        cp target/release/libvoidmic_plugin.so plugins/VoidMic.clap
+        
+        # LV2
+        # Needs manifests + binary
+        cp target/release/libvoidmic_lv2.so plugins/voidmic.lv2/
+        cp dist/voidmic.lv2/*.ttl plugins/voidmic.lv2/
+        
+        # Create Tarball
+        cd plugins
+        tar -czvf ../voidmic-plugins-linux-x86_64.tar.gz *
         cd ..
-        sha256sum voidmic-linux-x86_64.tar.gz > voidmic-linux-x86_64.tar.gz.sha256
+        sha256sum voidmic-plugins-linux-x86_64.tar.gz > voidmic-plugins-linux-x86_64.tar.gz.sha256
 
     - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
         generate_release_notes: true
         files: |
-          voidmic-linux-x86_64.tar.gz
-          voidmic-linux-x86_64.tar.gz.sha256
+          voidmic-plugins-linux-x86_64.tar.gz
+          voidmic-plugins-linux-x86_64.tar.gz.sha256
           target/debian/*.deb
           target/generate-rpm/*.rpm
           *.AppImage

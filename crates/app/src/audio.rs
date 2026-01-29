@@ -127,6 +127,7 @@ impl AudioEngine {
 
         // Initialize Processor
         let mut processor = VoidProcessor::new(
+            1, // Mono for App
             vad_sensitivity,
             if eq_enabled { eq_params } else { (0.0, 0.0, 0.0) },
             agc_target_level,
@@ -206,8 +207,8 @@ impl AudioEngine {
                     
                     // Process Audio
                     processor.process_frame(
-                        &input_frame,
-                        &mut output_frame,
+                        &[&input_frame],
+                        &mut [&mut output_frame],
                         None, // No reference frame yet
                         suppression_strength,
                         gate_threshold,
