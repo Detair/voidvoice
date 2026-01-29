@@ -49,16 +49,18 @@ jobs:
         mkdir -p AppDir/usr/bin
         mkdir -p AppDir/usr/share/applications
         mkdir -p AppDir/usr/share/icons/hicolor/32x32/apps
+        mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
         cp target/release/voidmic_app AppDir/usr/bin/voidmic
         cp assets/voidmic.desktop AppDir/usr/share/applications/
         cp assets/icon_32.png AppDir/usr/share/icons/hicolor/32x32/apps/voidmic.png
+        cp assets/logo_256.png AppDir/usr/share/icons/hicolor/256x256/apps/voidmic.png
         
         # Download linuxdeploy
         wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
         chmod +x linuxdeploy-x86_64.AppImage
         
-        # Build AppImage
-        ./linuxdeploy-x86_64.AppImage --appdir AppDir --output appimage --icon-file assets/icon_32.png --desktop-file assets/voidmic.desktop
+        # Build AppImage (Use 256px as main source, linuxdeploy will distribute it)
+        ./linuxdeploy-x86_64.AppImage --appdir AppDir --output appimage --icon-file assets/logo_256.png --desktop-file assets/voidmic.desktop
 
     - name: Package Plugins
       run: |

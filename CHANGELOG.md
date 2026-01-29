@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.6] - 2026-01-29
+### 🐛 Fixes
+- **AppImage**: Fixed invalid icon resolution (ensured 32x32 icon is correct size).
+- **Assets**: Fixed corrupt asset file formats.
+
 ## [0.9.5] - 2026-01-29
 ### 📦 Packaging
 - **Fixed DEB/RPM builds**: Corrected crate paths and metadata.
