@@ -496,6 +496,7 @@ impl VoidMicApp {
         ui.horizontal(|ui| {
             if ui
                 .checkbox(&mut self.config.dynamic_threshold_enabled, "Auto-Gate")
+                .on_hover_text("Automatically adjusts gate based on ambient noise floor")
                 .changed()
             {
                 self.config.preset = "Custom".to_string();
@@ -607,53 +608,38 @@ impl VoidMicApp {
         ui.separator();
 
         // VAD Controls
+        const VAD_MODES: &[(i32, &str, &str)] = &[
+            (0, "Quality", "Quality (Likely Speech)"),
+            (1, "Low Bitrate", "Low Bitrate"),
+            (2, "Aggressive", "Aggressive"),
+            (3, "Very Aggressive", "Very Aggressive"),
+        ];
         ui.horizontal(|ui| {
             ui.label("VAD Sensitivity:");
+            let current_label = VAD_MODES
+                .iter()
+                .find(|(v, _, _)| *v == self.config.vad_sensitivity)
+                .map(|(_, _, full)| *full)
+                .unwrap_or("Unknown");
             egui::ComboBox::from_id_salt("vad_combo")
-                .selected_text(match self.config.vad_sensitivity {
-                    0 => "Quality (Likely Speech)",
-                    1 => "Low Bitrate",
-                    2 => "Aggressive",
-                    3 => "Very Aggressive",
-                    _ => "Unknown",
-                })
+                .selected_text(current_label)
                 .show_ui(ui, |ui| {
-                    let mut changed = false;
-                    if ui
-                        .selectable_value(&mut self.config.vad_sensitivity, 0, "Quality")
-                        .clicked()
-                    {
-                        changed = true;
-                    }
-                    if ui
-                        .selectable_value(&mut self.config.vad_sensitivity, 1, "Low Bitrate")
-                        .clicked()
-                    {
-                        changed = true;
-                    }
-                    if ui
-                        .selectable_value(&mut self.config.vad_sensitivity, 2, "Aggressive")
-                        .clicked()
-                    {
-                        changed = true;
-                    }
-                    if ui
-                        .selectable_value(&mut self.config.vad_sensitivity, 3, "Very Aggressive")
-                        .clicked()
-                    {
-                        changed = true;
-                    }
-
-                    if changed {
-                        self.mark_config_dirty();
-                        if let Some(engine) = &self.engine {
-                            engine
-                                .vad_sensitivity
-                                .store(self.config.vad_sensitivity as u32, Ordering::Relaxed);
+                    for (value, label, _) in VAD_MODES {
+                        if ui
+                            .selectable_value(&mut self.config.vad_sensitivity, *value, *label)
+                            .clicked()
+                        {
+                            self.mark_config_dirty();
+                            if let Some(engine) = &self.engine {
+                                engine
+                                    .vad_sensitivity
+                                    .store(self.config.vad_sensitivity as u32, Ordering::Relaxed);
+                            }
                         }
                     }
                 });
-            ui.label(egui::RichText::new("ℹ️ WebRTC Voice Activity Detection").size(10.0));
+            ui.label(egui::RichText::new("ℹ️ WebRTC VAD").size(10.0))
+                .on_hover_text("Voice Activity Detection - filters non-speech sounds");
         });
 
         ui.separator();
@@ -669,7 +655,7 @@ impl VoidMicApp {
         });
 
         if self.config.eq_enabled {
-            ui.horizontal(|ui| {
+            egui::Grid::new("eq_grid").num_columns(2).show(ui, |ui| {
                 ui.label("Low (Bass):");
                 if ui
                     .add(egui::Slider::new(&mut self.config.eq_low_gain, -10.0..=10.0).text("dB"))
@@ -682,8 +668,8 @@ impl VoidMicApp {
                             .store(self.config.eq_low_gain.to_bits(), Ordering::Relaxed);
                     }
                 }
-            });
-            ui.horizontal(|ui| {
+                ui.end_row();
+
                 ui.label("Mid (Voice):");
                 if ui
                     .add(egui::Slider::new(&mut self.config.eq_mid_gain, -10.0..=10.0).text("dB"))
@@ -696,8 +682,8 @@ impl VoidMicApp {
                             .store(self.config.eq_mid_gain.to_bits(), Ordering::Relaxed);
                     }
                 }
-            });
-            ui.horizontal(|ui| {
+                ui.end_row();
+
                 ui.label("High (Treble):");
                 if ui
                     .add(egui::Slider::new(&mut self.config.eq_high_gain, -10.0..=10.0).text("dB"))
@@ -710,6 +696,7 @@ impl VoidMicApp {
                             .store(self.config.eq_high_gain.to_bits(), Ordering::Relaxed);
                     }
                 }
+                ui.end_row();
             });
         }
 
@@ -719,6 +706,7 @@ impl VoidMicApp {
         ui.horizontal(|ui| {
             if ui
                 .checkbox(&mut self.config.agc_enabled, "Automatic Gain Control (AGC)")
+                .on_hover_text("Normalizes volume to prevent clipping and boost quiet speech")
                 .changed()
             {
                 self.mark_config_dirty();
@@ -728,7 +716,6 @@ impl VoidMicApp {
                         .store(self.config.agc_enabled, Ordering::Relaxed);
                 }
             }
-            ui.label(egui::RichText::new("ℹ️ Keeps volume consistent").size(10.0));
         });
 
         ui.add_space(5.0);
@@ -769,6 +756,8 @@ impl VoidMicApp {
             self.render_spectrum(ui);
 
             // Jitter Monitor (Phase 6)
+            const JITTER_GOOD_US: u32 = 1000;
+            const JITTER_WARN_US: u32 = 5000;
             let jitter = self
                 .engine
                 .as_ref()
@@ -778,14 +767,15 @@ impl VoidMicApp {
             ui.add_space(5.0);
             ui.horizontal(|ui| {
                 ui.label("Latency Health:");
-                let color = if jitter < 1000 {
+                let color = if jitter < JITTER_GOOD_US {
                     egui::Color32::GREEN
-                } else if jitter < 5000 {
+                } else if jitter < JITTER_WARN_US {
                     egui::Color32::YELLOW
                 } else {
                     egui::Color32::RED
                 };
-                ui.colored_label(color, format!("{} µs jitter (Max)", jitter));
+                ui.colored_label(color, format!("{} µs jitter", jitter))
+                    .on_hover_text("< 1ms = excellent | 1-5ms = acceptable | > 5ms = may cause audio glitches");
             });
         }
     }
