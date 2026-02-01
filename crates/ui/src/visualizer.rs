@@ -7,8 +7,8 @@ pub fn render_spectrum(ui: &mut egui::Ui, input_data: &[f32], output_data: &[f32
     }
 
     let red_line = Line::new(PlotPoints::from_ys_f32(input_data))
-        .color(egui::Color32::from_rgba_premultiplied(100, 0, 0, 100))
-        .fill(0.0); // Fill input (noise) with red/grey
+        .color(egui::Color32::from_rgba_unmultiplied(220, 53, 69, 180)) // Clearer red
+        .fill(0.0); // Fill input (noise)
 
     let green_line = Line::new(PlotPoints::from_ys_f32(output_data))
         .color(egui::Color32::GREEN)

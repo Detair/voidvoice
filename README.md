@@ -70,10 +70,18 @@ cargo build --release --no-default-features
 ```
 
 ### 🪟 Windows
-1.  Install **Rust**.
-2.  Install **BSVC** (C++ Build Tools).
+1.  **Install Virtual Audio**: Download [VB-Cable](https://vb-audio.com/Cable/) (free) and reboot.
+2.  Install **Rust** and **BSVC** (C++ Build Tools).
 3.  `cargo build --release`
 4.  Run `.\target\release\voidmic.exe`
+5.  In VoidMic, select "CABLE Input" as Output.
+
+### 🍎 macOS
+1.  **Install Virtual Audio**: `brew install blackhole-2ch` and reboot.
+2.  Install **Rust** via [rustup.rs](https://rustup.rs).
+3.  `cargo build --release`
+4.  Run `./target/release/voidmic`
+5.  In VoidMic, select "BlackHole 2ch" as Output.
 
 ## 🎮 Usage Guide
 

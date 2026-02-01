@@ -68,16 +68,13 @@ pub fn create_virtual_sink() -> Result<VirtualDevice, String> {
     #[cfg(target_os = "windows")]
     {
         // On Windows, we can't auto-create. Return instruction to install VB-Cable.
-        Err("Windows requires VB-Cable. Please install from vb-audio.com/Cable/".to_string())
+        Err("Windows requires VB-Cable. Install from: https://vb-audio.com/Cable/".to_string())
     }
 
     #[cfg(target_os = "macos")]
     {
         // On macOS, we can't auto-create. Return instruction to install BlackHole.
-        Err(
-            "macOS requires BlackHole. Please install from github.com/ExistentialAudio/BlackHole"
-                .to_string(),
-        )
+        Err("macOS requires BlackHole. Install via: brew install blackhole-2ch".to_string())
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
