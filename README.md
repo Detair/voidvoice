@@ -103,6 +103,81 @@ voidmic load -i default
 voidmic unload
 ```
 
+## 🧩 Architecture Diagrams
+
+### Signal Flow
+```mermaid
+graph TD
+    Input[Microphone Input] -->|Raw Audio| AEC[Echo Cancellation]
+    Ref[Speaker Reference] -.->|Monitor| AEC
+    AEC --> Denoise[RNNoise Denoising]
+    Denoise --> Blend[Suppression Blend]
+    Blend --> Gate[Smart Gate]
+    
+    subgraph Analysis [Sidechain Analysis]
+        Blend -.-> MonoMix[Mono Mix]
+        MonoMix --> VAD[VAD & RMS]
+        VAD --> Logic[Gate Logic]
+    end
+    
+    Logic -->|Control Signal| Gate
+    Gate --> EQ[3-Band Equalizer]
+    EQ --> AGC[Automatic Gain Control]
+    AGC --> Crossfade[Bypass Crossfade]
+    Crossfade --> Output[Virtual Sink Output]
+```
+
+### User Interaction
+```mermaid
+sequenceDiagram
+    participant User
+    participant GUI
+    participant Config
+    participant AudioEngine
+    participant Processor
+
+    User->>GUI: Adjust Settings (e.g., Threshold)
+    GUI->>Config: Save to AppConfig
+    GUI->>AudioEngine: Update Atomics (Ordering::Relaxed)
+    
+    loop Audio Thread
+        AudioEngine->>Processor: process_updates()
+        Processor->>Processor: Load Atomics & Update State
+    end
+    
+    Processor-->>AudioEngine: Spectrum Data
+    AudioEngine-->>GUI: Crossbeam Channel (Visualizer)
+    GUI->>User: Render Visual Feedback
+```
+
+### Data Processing (VoidProcessor)
+```mermaid
+flowchart LR
+    subgraph VoidProcessor
+        direction TB
+        InputFrame --> PerChannel
+        
+        subgraph PerChannel [Per-Channel Processing]
+            EC[Echo Cancel] --> RN[RNNoise]
+            RN --> B[Blend]
+        end
+        
+        B --> Mono[Mono Analysis]
+        
+        subgraph Mono [Mono Analysis]
+            RMS[RMS Calc] --> VAD[Webrtc VAD]
+            VAD --> Dec[Gate Decision]
+        end
+        
+        Dec --> G[Apply Gate]
+        PerChannel --> G
+        G --> EQ[Equalizer]
+        EQ --> AGC[AGC Limiter]
+    end
+    
+    AGC --> OutputFrame
+```
+
 ## 🧠 AI Transparency
 Architected with **Google Gemini** and **Antigravity AI**.
 
