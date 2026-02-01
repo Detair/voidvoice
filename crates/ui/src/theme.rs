@@ -7,7 +7,6 @@ pub fn setup_custom_style(ctx: &egui::Context, dark_mode: bool) {
         // Premium Dark Palette (Deep Void Blue)
         let bg_color = Color32::from_rgb(13, 17, 23); // Extremely dark blue-grey
         let panel_color = Color32::from_rgb(22, 27, 34); // Slightly lighter
-        let _accent_color = Color32::from_rgb(88, 166, 255); // Vibrant blue
         let text_color = Color32::from_rgb(240, 246, 252);
 
         visuals.window_fill = bg_color;

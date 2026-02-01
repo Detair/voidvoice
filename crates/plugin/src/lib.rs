@@ -1,7 +1,8 @@
 use crossbeam_channel::Receiver;
 use nih_plug::prelude::*;
 use nih_plug_egui::{create_egui_editor, widgets, EguiState};
-use ringbuf::{Consumer, Producer, RingBuffer};
+use ringbuf::traits::{Consumer, Observer, Producer};
+use ringbuf::HeapRb;
 use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -17,10 +18,8 @@ struct VoidMicPlugin {
     processor: Option<VoidProcessor>,
 
     // Ring Buffers (Audio I/O)
-    rb_in_prod: Option<Producer<f32>>,
-    rb_in_cons: Option<Consumer<f32>>,
-    rb_out_prod: Option<Producer<f32>>,
-    rb_out_cons: Option<Consumer<f32>>,
+    rb_in: Option<HeapRb<f32>>,
+    rb_out: Option<HeapRb<f32>>,
 
     // GUI Data Bridging
     volume_level: Arc<AtomicU32>,
@@ -57,10 +56,8 @@ impl Default for VoidMicPlugin {
         Self {
             params: Arc::new(VoidMicParams::default()),
             processor: None,
-            rb_in_prod: None,
-            rb_in_cons: None,
-            rb_out_prod: None,
-            rb_out_cons: None,
+            rb_in: None,
+            rb_out: None,
             volume_level: Arc::new(AtomicU32::new(0)),
             spectrum_receiver: None,
         }
@@ -99,7 +96,7 @@ impl Plugin for VoidMicPlugin {
     const NAME: &'static str = "VoidMic";
     const VENDOR: &'static str = "Detair";
     const URL: &'static str = "https://github.com/Detair/voidvoice";
-    const EMAIL: &'static str = "user@example.com";
+    const EMAIL: &'static str = "";
 
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
@@ -198,9 +195,10 @@ impl Plugin for VoidMicPlugin {
     ) -> bool {
         if buffer_config.sample_rate != SAMPLE_RATE as f32 {
             nih_log!(
-                "VoidMic only supports 48kHz currently. Host is using {:.0}Hz",
+                "VoidMic requires 48kHz sample rate. Host is using {:.0}Hz. Plugin initialization rejected.",
                 buffer_config.sample_rate
             );
+            return false;
         }
 
         let (tx, rx) = crossbeam_channel::bounded(2);
@@ -222,16 +220,9 @@ impl Plugin for VoidMicPlugin {
 
         let buffer_size = FRAME_SIZE * 4 * 2; // * 2 for Stereo
 
-        // Ringbuf 0.2.8
-        let rb_in = RingBuffer::<f32>::new(buffer_size);
-        let (prod_in, cons_in) = rb_in.split();
-        self.rb_in_prod = Some(prod_in);
-        self.rb_in_cons = Some(cons_in);
-
-        let rb_out = RingBuffer::<f32>::new(buffer_size);
-        let (prod_out, cons_out) = rb_out.split();
-        self.rb_out_prod = Some(prod_out);
-        self.rb_out_cons = Some(cons_out);
+        // Ringbuf 0.4
+        self.rb_in = Some(HeapRb::<f32>::new(buffer_size));
+        self.rb_out = Some(HeapRb::<f32>::new(buffer_size));
 
         true
     }
@@ -264,32 +255,32 @@ impl Plugin for VoidMicPlugin {
         let num_samples = channel_data[0].len();
 
         // 1. Push Input (Interleaved)
-        if let Some(prod_in) = &mut self.rb_in_prod {
+        if let Some(rb_in) = &mut self.rb_in {
             for i in 0..num_samples {
                 if num_channels == 2 {
-                    let _ = prod_in.push(channel_data[0][i]);
-                    let _ = prod_in.push(channel_data[1][i]);
+                    let _ = rb_in.try_push(channel_data[0][i]);
+                    let _ = rb_in.try_push(channel_data[1][i]);
                 } else if num_channels == 1 {
                     // Duplicate Mono to Stereo
                     let val = channel_data[0][i];
-                    let _ = prod_in.push(val);
-                    let _ = prod_in.push(val);
+                    let _ = rb_in.try_push(val);
+                    let _ = rb_in.try_push(val);
                 }
             }
         }
 
         // 2. Process chunks
-        if let (Some(cons_in), Some(prod_out)) = (&mut self.rb_in_cons, &mut self.rb_out_prod) {
+        if let (Some(rb_in), Some(rb_out)) = (&mut self.rb_in, &mut self.rb_out) {
             let mut left_in = [0.0f32; FRAME_SIZE];
             let mut right_in = [0.0f32; FRAME_SIZE];
             let mut left_out = [0.0f32; FRAME_SIZE];
             let mut right_out = [0.0f32; FRAME_SIZE];
 
             // Need 2 * FRAME_SIZE samples for a full stereo frame
-            while cons_in.len() >= FRAME_SIZE * 2 {
+            while rb_in.occupied_len() >= FRAME_SIZE * 2 {
                 for j in 0..FRAME_SIZE {
-                    left_in[j] = cons_in.pop().unwrap_or(0.0);
-                    right_in[j] = cons_in.pop().unwrap_or(0.0);
+                    left_in[j] = rb_in.try_pop().unwrap_or(0.0);
+                    right_in[j] = rb_in.try_pop().unwrap_or(0.0);
                 }
 
                 processor.process_frame(
@@ -302,18 +293,18 @@ impl Plugin for VoidMicPlugin {
                 );
 
                 for j in 0..FRAME_SIZE {
-                    let _ = prod_out.push(left_out[j]);
-                    let _ = prod_out.push(right_out[j]);
+                    let _ = rb_out.try_push(left_out[j]);
+                    let _ = rb_out.try_push(right_out[j]);
                 }
             }
         }
 
         // 3. Output
-        if let Some(cons_out) = &mut self.rb_out_cons {
+        if let Some(rb_out) = &mut self.rb_out {
             for i in 0..num_samples {
-                if cons_out.len() >= 2 {
-                    let l = cons_out.pop().unwrap_or(0.0);
-                    let r = cons_out.pop().unwrap_or(0.0);
+                if rb_out.occupied_len() >= 2 {
+                    let l = rb_out.try_pop().unwrap_or(0.0);
+                    let r = rb_out.try_pop().unwrap_or(0.0);
 
                     if num_channels >= 1 {
                         channel_data[0][i] = l;

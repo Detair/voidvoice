@@ -1,5 +1,6 @@
 use lv2::prelude::*;
-use ringbuf::{Consumer, Producer, RingBuffer};
+use ringbuf::traits::{Consumer, Observer, Producer};
+use ringbuf::HeapRb;
 use std::sync::atomic::Ordering;
 use voidmic_core::constants::FRAME_SIZE;
 use voidmic_core::VoidProcessor;
@@ -18,10 +19,8 @@ struct VoidMicPorts {
 #[uri("https://github.com/Detair/voidvoice/lv2/voidmic")]
 struct VoidMic {
     processor: VoidProcessor,
-    rb_in_prod: Producer<f32>,
-    rb_in_cons: Consumer<f32>,
-    rb_out_prod: Producer<f32>,
-    rb_out_cons: Consumer<f32>,
+    rb_in: HeapRb<f32>,
+    rb_out: HeapRb<f32>,
 }
 
 impl Plugin for VoidMic {
@@ -39,17 +38,13 @@ impl Plugin for VoidMic {
         );
 
         let buffer_size = FRAME_SIZE * 4 * 2;
-        let rb_in = RingBuffer::<f32>::new(buffer_size);
-        let (prod_in, cons_in) = rb_in.split();
-        let rb_out = RingBuffer::<f32>::new(buffer_size);
-        let (prod_out, cons_out) = rb_out.split();
+        let rb_in = HeapRb::<f32>::new(buffer_size);
+        let rb_out = HeapRb::<f32>::new(buffer_size);
 
         Some(Self {
             processor,
-            rb_in_prod: prod_in,
-            rb_in_cons: cons_in,
-            rb_out_prod: prod_out,
-            rb_out_cons: cons_out,
+            rb_in,
+            rb_out,
         })
     }
 
@@ -69,8 +64,8 @@ impl Plugin for VoidMic {
         let input_r = ports.input_r.iter();
 
         for (l, r) in input_l.zip(input_r) {
-            let _ = self.rb_in_prod.push(*l);
-            let _ = self.rb_in_prod.push(*r);
+            let _ = self.rb_in.try_push(*l);
+            let _ = self.rb_in.try_push(*r);
         }
 
         // 3. Process Blocks
@@ -79,10 +74,10 @@ impl Plugin for VoidMic {
         let mut left_out = [0.0f32; FRAME_SIZE];
         let mut right_out = [0.0f32; FRAME_SIZE];
 
-        while self.rb_in_cons.len() >= FRAME_SIZE * 2 {
+        while self.rb_in.occupied_len() >= FRAME_SIZE * 2 {
             for j in 0..FRAME_SIZE {
-                left_in[j] = self.rb_in_cons.pop().unwrap_or(0.0);
-                right_in[j] = self.rb_in_cons.pop().unwrap_or(0.0);
+                left_in[j] = self.rb_in.try_pop().unwrap_or(0.0);
+                right_in[j] = self.rb_in.try_pop().unwrap_or(0.0);
             }
 
             self.processor.process_frame(
@@ -95,8 +90,8 @@ impl Plugin for VoidMic {
             );
 
             for j in 0..FRAME_SIZE {
-                let _ = self.rb_out_prod.push(left_out[j]);
-                let _ = self.rb_out_prod.push(right_out[j]);
+                let _ = self.rb_out.try_push(left_out[j]);
+                let _ = self.rb_out.try_push(right_out[j]);
             }
         }
 
@@ -105,9 +100,9 @@ impl Plugin for VoidMic {
         let output_r = ports.output_r.iter_mut();
 
         for (l, r) in output_l.zip(output_r) {
-            if self.rb_out_cons.len() >= 2 {
-                *l = self.rb_out_cons.pop().unwrap_or(0.0);
-                *r = self.rb_out_cons.pop().unwrap_or(0.0);
+            if self.rb_out.occupied_len() >= 2 {
+                *l = self.rb_out.try_pop().unwrap_or(0.0);
+                *r = self.rb_out.try_pop().unwrap_or(0.0);
             } else {
                 *l = 0.0;
                 *r = 0.0;
@@ -117,3 +112,4 @@ impl Plugin for VoidMic {
 }
 
 lv2_descriptors!(VoidMic);
+

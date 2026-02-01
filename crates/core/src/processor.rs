@@ -406,8 +406,9 @@ impl VoidProcessor {
                 if let Some(refs) = ref_frames {
                     // Try to match channel, or use channel 0 if fewer refs
                     if let Some(ref_ch) = refs.get(i).or(refs.first()) {
-                        let processed = aec_instance.process_frame(&temp_input, ref_ch);
-                        temp_input.copy_from_slice(&processed);
+                        let mut aec_output = [0.0f32; FRAME_SIZE];
+                        aec_instance.process_frame(&temp_input, ref_ch, &mut aec_output);
+                        temp_input.copy_from_slice(&aec_output);
                     }
                 }
             }
