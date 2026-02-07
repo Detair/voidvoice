@@ -665,8 +665,9 @@ impl VoidMicApp {
                         ) {
                             Ok(filter) => self.output_filter_engine = Some(filter),
                             Err(e) => {
-                                log::warn!("Output filter failed to start: {}", e);
+                                log::error!("Output filter failed to start: {}", e);
                                 self.status_msg = format!("Output filter error: {}", e);
+                                self.config.output_filter_enabled = false;
                             }
                         }
                     }
@@ -689,8 +690,13 @@ impl VoidMicApp {
                 self.mark_config_dirty();
                 // Echo cancel requires engine restart to reconfigure streams
                 if self.engine.is_some() {
+                    let prev_echo = !self.config.echo_cancel_enabled;
                     self.stop_engine();
                     self.start_engine();
+                    if self.engine.is_none() {
+                        // Restart failed - revert toggle so UI matches reality
+                        self.config.echo_cancel_enabled = prev_echo;
+                    }
                 }
             }
         });

@@ -245,16 +245,18 @@ impl AudioEngine {
                 processor.process_updates();
 
                 if cons_in.occupied_len() >= FRAME_SIZE {
-                    // Jitter Calculation
+                    // Jitter Calculation - skip obviously invalid deltas (e.g. system suspend)
                     let now = std::time::Instant::now();
                     let loop_delta = now.duration_since(last_loop_time).as_micros() as u32;
                     last_loop_time = now;
 
-                    let expected = 10_000u32;
-                    let jitter = loop_delta.abs_diff(expected) as f32;
+                    if loop_delta < 100_000 {
+                        let expected = 10_000u32;
+                        let jitter = loop_delta.abs_diff(expected) as f32;
 
-                    // EWMA: alpha=0.1 gives ~10-frame smoothing
-                    jitter_ewma = jitter_ewma * 0.9 + jitter * 0.1;
+                        // EWMA: alpha=0.1 gives ~10-frame smoothing
+                        jitter_ewma = jitter_ewma * 0.9 + jitter * 0.1;
+                    }
 
                     // Report to GUI every 50 frames (~500ms)
                     frames_since_jitter_report += 1;
@@ -286,12 +288,18 @@ impl AudioEngine {
                         processor.dynamic_threshold_enabled.load(Ordering::Relaxed),
                     );
 
-                    // Write Audio - yield briefly if output buffer is full
-                    if prod_out.vacant_len() < FRAME_SIZE {
+                    // Write Audio - retry briefly if output buffer is full
+                    let mut retries = 0;
+                    while prod_out.vacant_len() < FRAME_SIZE {
                         thread::yield_now();
-                        continue; // Re-check in next loop iteration
+                        retries += 1;
+                        if retries > 100 {
+                            break;
+                        }
                     }
-                    prod_out.push_slice(&output_frame);
+                    if prod_out.vacant_len() >= FRAME_SIZE {
+                        prod_out.push_slice(&output_frame);
+                    }
                 } else {
                     thread::sleep(Duration::from_micros(200));
                 }
@@ -437,11 +445,17 @@ impl OutputFilterEngine {
                             + output_frame[i] * strength;
                     }
 
-                    if prod_out.vacant_len() < FRAME_SIZE {
+                    let mut retries = 0;
+                    while prod_out.vacant_len() < FRAME_SIZE {
                         thread::yield_now();
-                        continue;
+                        retries += 1;
+                        if retries > 100 {
+                            break;
+                        }
                     }
-                    prod_out.push_slice(&output_frame);
+                    if prod_out.vacant_len() >= FRAME_SIZE {
+                        prod_out.push_slice(&output_frame);
+                    }
                 } else {
                     thread::sleep(Duration::from_micros(500));
                 }
