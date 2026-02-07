@@ -34,6 +34,7 @@ pub struct AudioEngine {
     pub eq_mid_gain: Arc<AtomicU32>,
     pub eq_high_gain: Arc<AtomicU32>,
 
+    pub eq_enabled: Arc<AtomicBool>,
     pub agc_enabled: Arc<AtomicBool>,
     pub _agc_target: Arc<AtomicU32>, // Kept for potential GUI control
     pub bypass_enabled: Arc<AtomicBool>,
@@ -175,14 +176,11 @@ impl AudioEngine {
         )?;
 
         // Initialize Processor
+        // Always pass real EQ params; eq_enabled atomic controls whether EQ runs
         let mut processor = VoidProcessor::new(
             1, // Mono for App
             vad_sensitivity,
-            if eq_enabled {
-                eq_params
-            } else {
-                (0.0, 0.0, 0.0)
-            },
+            eq_params,
             agc_target_level,
             echo_cancel_enabled,
         );
@@ -197,6 +195,7 @@ impl AudioEngine {
         processor
             .dynamic_threshold_enabled
             .store(dynamic_threshold_enabled, Ordering::Relaxed);
+        processor.eq_enabled.store(eq_enabled, Ordering::Relaxed);
         processor.agc_enabled.store(agc_enabled, Ordering::Relaxed);
         processor
             .bypass_enabled
@@ -213,6 +212,7 @@ impl AudioEngine {
         let eq_low_atomic = processor.eq_low_gain.clone();
         let eq_mid_atomic = processor.eq_mid_gain.clone();
         let eq_high_atomic = processor.eq_high_gain.clone();
+        let eq_enabled_atomic = processor.eq_enabled.clone();
         let agc_enabled_atomic = processor.agc_enabled.clone();
         let agc_target_atomic = processor.agc_target.clone();
         let bypass_enabled_atomic = processor.bypass_enabled.clone();
@@ -231,10 +231,10 @@ impl AudioEngine {
             let mut output_frame = [0.0f32; FRAME_SIZE];
             let mut ref_frame = [0.0f32; FRAME_SIZE];
 
-            // Jitter State
+            // Jitter State - EWMA for smoother, more responsive display
             let mut last_loop_time = std::time::Instant::now();
-            let mut jitter_accum = 0;
-            let mut frames_since_jitter_reset = 0;
+            let mut jitter_ewma: f32 = 0.0;
+            let mut frames_since_jitter_report = 0u32;
 
             loop {
                 if !run_flag.load(Ordering::Relaxed) {
@@ -250,24 +250,19 @@ impl AudioEngine {
                     let loop_delta = now.duration_since(last_loop_time).as_micros() as u32;
                     last_loop_time = now;
 
-                    let expected = 10_000;
-                    let jitter = if loop_delta > expected {
-                        loop_delta - expected
-                    } else {
-                        expected - loop_delta
-                    };
+                    let expected = 10_000u32;
+                    let jitter = loop_delta.abs_diff(expected) as f32;
 
-                    if jitter > jitter_accum {
-                        jitter_accum = jitter;
-                    }
+                    // EWMA: alpha=0.1 gives ~10-frame smoothing
+                    jitter_ewma = jitter_ewma * 0.9 + jitter * 0.1;
 
-                    frames_since_jitter_reset += 1;
-                    if frames_since_jitter_reset >= 100 {
+                    // Report to GUI every 50 frames (~500ms)
+                    frames_since_jitter_report += 1;
+                    if frames_since_jitter_report >= 50 {
                         processor
                             .jitter_max_us
-                            .store(jitter_accum, Ordering::Relaxed);
-                        jitter_accum = 0;
-                        frames_since_jitter_reset = 0;
+                            .store(jitter_ewma as u32, Ordering::Relaxed);
+                        frames_since_jitter_report = 0;
                     }
 
                     // Read Audio
@@ -291,9 +286,10 @@ impl AudioEngine {
                         processor.dynamic_threshold_enabled.load(Ordering::Relaxed),
                     );
 
-                    // Write Audio
-                    while prod_out.vacant_len() < FRAME_SIZE {
-                        thread::sleep(Duration::from_micros(500));
+                    // Write Audio - yield briefly if output buffer is full
+                    if prod_out.vacant_len() < FRAME_SIZE {
+                        thread::yield_now();
+                        continue; // Re-check in next loop iteration
                     }
                     prod_out.push_slice(&output_frame);
                 } else {
@@ -320,6 +316,7 @@ impl AudioEngine {
             eq_low_gain: eq_low_atomic,
             eq_mid_gain: eq_mid_atomic,
             eq_high_gain: eq_high_atomic,
+            eq_enabled: eq_enabled_atomic,
             agc_enabled: agc_enabled_atomic,
             _agc_target: agc_target_atomic,
             bypass_enabled: bypass_enabled_atomic,
@@ -346,6 +343,7 @@ pub struct OutputFilterEngine {
     _input_stream: cpal::Stream,
     _output_stream: cpal::Stream,
     is_running: Arc<AtomicBool>,
+    pub suppression_strength: Arc<AtomicU32>,
 }
 
 impl OutputFilterEngine {
@@ -417,6 +415,8 @@ impl OutputFilterEngine {
 
         let is_running = Arc::new(AtomicBool::new(true));
         let run_flag = is_running.clone();
+        let suppression_atomic = Arc::new(AtomicU32::new(suppression_strength.to_bits()));
+        let suppression_for_thread = suppression_atomic.clone();
 
         thread::spawn(move || {
             let mut denoise = DenoiseState::new();
@@ -430,14 +430,16 @@ impl OutputFilterEngine {
                     // Denoise with RNNoise
                     denoise.process_frame(&mut output_frame, &input_frame);
 
-                    // Blend based on suppression strength
+                    // Blend based on suppression strength (live-updated from GUI)
+                    let strength = f32::from_bits(suppression_for_thread.load(Ordering::Relaxed));
                     for i in 0..FRAME_SIZE {
-                        output_frame[i] = input_frame[i] * (1.0 - suppression_strength)
-                            + output_frame[i] * suppression_strength;
+                        output_frame[i] = input_frame[i] * (1.0 - strength)
+                            + output_frame[i] * strength;
                     }
 
-                    while prod_out.vacant_len() < FRAME_SIZE {
-                        thread::sleep(Duration::from_micros(500));
+                    if prod_out.vacant_len() < FRAME_SIZE {
+                        thread::yield_now();
+                        continue;
                     }
                     prod_out.push_slice(&output_frame);
                 } else {
@@ -453,6 +455,7 @@ impl OutputFilterEngine {
             _input_stream: input_stream,
             _output_stream: output_stream,
             is_running,
+            suppression_strength: suppression_atomic,
         })
     }
 }

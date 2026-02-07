@@ -140,6 +140,10 @@ struct VoidMicApp {
     // Phase 6
     spectrum_receiver: Option<Receiver<(Vec<f32>, Vec<f32>)>>,
     last_spectrum_data: (Vec<f32>, Vec<f32>), // Cache for rendering
+    // Track mini mode resize so we only send the command once
+    mini_mode_resized: bool,
+    // Periodic auto-save for dirty config
+    last_config_save: std::time::Instant,
 }
 
 const QUIT_ID: &str = "quit";
@@ -222,6 +226,8 @@ impl VoidMicApp {
             wizard_step: WizardStep::Welcome,
             spectrum_receiver: None,
             last_spectrum_data: (Vec::new(), Vec::new()),
+            mini_mode_resized: false,
+            last_config_save: std::time::Instant::now(),
         };
 
         // Register Hotkey
@@ -413,7 +419,6 @@ impl VoidMicApp {
         dismiss
     }
 
-    /// Renders the volume meter with dB scaling.
     /// Renders the volume meter with dB scaling and threshold marker.
     fn render_volume_meter(&self, ui: &mut egui::Ui) {
         let volume = if let Some(engine) = &self.engine {
@@ -471,8 +476,8 @@ impl VoidMicApp {
 
         ui.add_space(10.0);
 
-        // One-Click Setup Section (cache pactl check, refresh every 2 seconds)
-        if self.last_sink_check.elapsed().as_secs() >= 2 {
+        // One-Click Setup Section (cache pactl check, refresh every 5 seconds)
+        if self.last_sink_check.elapsed().as_secs() >= 5 {
             self.virtual_sink_cached = virtual_device::virtual_sink_exists();
             self.last_sink_check = std::time::Instant::now();
         }
@@ -612,6 +617,9 @@ impl VoidMicApp {
                 if let Some(engine) = &self.engine {
                     engine.suppression_strength.store(self.config.suppression_strength.to_bits(), Ordering::Relaxed);
                 }
+                if let Some(filter) = &self.output_filter_engine {
+                    filter.suppression_strength.store(self.config.suppression_strength.to_bits(), Ordering::Relaxed);
+                }
             }
         });
     }
@@ -647,6 +655,24 @@ impl VoidMicApp {
                 .changed()
             {
                 self.mark_config_dirty();
+                // Start/stop output filter engine on toggle
+                if self.config.output_filter_enabled {
+                    if self.engine.is_some() && self.output_filter_engine.is_none() {
+                        match OutputFilterEngine::start(
+                            &self.selected_reference,
+                            &self.selected_output,
+                            self.config.suppression_strength,
+                        ) {
+                            Ok(filter) => self.output_filter_engine = Some(filter),
+                            Err(e) => {
+                                log::warn!("Output filter failed to start: {}", e);
+                                self.status_msg = format!("Output filter error: {}", e);
+                            }
+                        }
+                    }
+                } else {
+                    self.output_filter_engine = None;
+                }
             }
             ui.label(
                 egui::RichText::new("⚠️ ~100ms latency")
@@ -661,6 +687,11 @@ impl VoidMicApp {
                 .changed()
             {
                 self.mark_config_dirty();
+                // Echo cancel requires engine restart to reconfigure streams
+                if self.engine.is_some() {
+                    self.stop_engine();
+                    self.start_engine();
+                }
             }
         });
 
@@ -726,6 +757,9 @@ impl VoidMicApp {
                 .changed()
             {
                 self.mark_config_dirty();
+                if let Some(engine) = &self.engine {
+                    engine.eq_enabled.store(self.config.eq_enabled, Ordering::Relaxed);
+                }
             }
         });
 
@@ -961,17 +995,18 @@ impl VoidMicApp {
                          ui.heading("🎤 Select Microphone");
                          ui.add_space(10.0);
                          ui.label("Choose the microphone you want to clean up:");
-                         let input_devices = self.input_devices.clone();
+                         let mut changed = false;
                          egui::ComboBox::from_id_salt("wizard_mic")
                             .selected_text(&self.selected_input)
                             .width(250.0)
                             .show_ui(ui, |ui| {
-                                for dev in &input_devices {
+                                for dev in &self.input_devices {
                                     if ui.selectable_value(&mut self.selected_input, dev.clone(), dev).changed() {
-                                        self.mark_config_dirty();
+                                        changed = true;
                                     }
                                 }
                             });
+                         if changed { self.mark_config_dirty(); }
 
                          ui.add_space(40.0);
                          if ui.button("Next ➡").clicked() {
@@ -982,17 +1017,18 @@ impl VoidMicApp {
                          ui.heading("🔊 Select Output");
                          ui.add_space(10.0);
                          ui.label("Choose where you want to hear the processed audio (or your speakers):");
-                         let output_devices = self.output_devices.clone();
+                         let mut changed = false;
                          egui::ComboBox::from_id_salt("wizard_out")
                             .selected_text(&self.selected_output)
                             .width(250.0)
                             .show_ui(ui, |ui| {
-                                for dev in &output_devices {
+                                for dev in &self.output_devices {
                                      if ui.selectable_value(&mut self.selected_output, dev.clone(), dev).changed() {
-                                        self.mark_config_dirty();
+                                        changed = true;
                                     }
                                 }
                             });
+                         if changed { self.mark_config_dirty(); }
 
                          ui.add_space(40.0);
                          ui.horizontal(|ui| {
@@ -1089,7 +1125,19 @@ impl eframe::App for VoidMicApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
         }
 
-        ctx.request_repaint_after(std::time::Duration::from_millis(33));
+        // Only repaint at 30fps when engine is running (for meters/visualizer)
+        // Otherwise use a slow poll rate for tray events and hotkeys
+        if self.engine.is_some() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(33));
+        } else {
+            ctx.request_repaint_after(std::time::Duration::from_millis(500));
+        }
+
+        // Auto-save dirty config every 5 seconds to prevent data loss on crash
+        if self.config_dirty && self.last_config_save.elapsed().as_secs() >= 5 {
+            self.save_config();
+            self.last_config_save = std::time::Instant::now();
+        }
 
         // Check for update result from async receiver
         if let Some(ref rx) = self.update_receiver {
@@ -1105,9 +1153,13 @@ impl eframe::App for VoidMicApp {
         }
 
         if self.config.mini_mode {
-            if !self.render_mini(ctx) {
-                // Shrink window if not expanding
+            if self.render_mini(ctx) {
+                // Expanding back to full size
+                self.mini_mode_resized = false;
+            } else if !self.mini_mode_resized {
+                // Shrink window once on transition to mini mode
                 ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize([150.0, 150.0].into()));
+                self.mini_mode_resized = true;
             }
             return;
         }
@@ -1118,12 +1170,15 @@ impl eframe::App for VoidMicApp {
                 self.update_info = None;
             }
 
+            egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+
             ui.heading("VoidMic 🌌");
             ui.horizontal(|ui| {
                  ui.label(egui::RichText::new("Hybrid Noise Reduction").size(10.0).weak());
                  ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                      if ui.button("➖").on_hover_text("Compact Mode").clicked() {
                          self.config.mini_mode = true;
+                         self.mini_mode_resized = false;
                          self.mark_config_dirty();
                      }
                  });
@@ -1247,15 +1302,7 @@ impl eframe::App for VoidMicApp {
                  if ui.checkbox(&mut dark_mode, "Dark Mode").changed() {
                      self.config.dark_mode = dark_mode;
                      self.save_config_now();
-                     // Apply theme change immediately
-                     if dark_mode {
-                         let mut visuals = egui::Visuals::dark();
-                         visuals.window_fill = egui::Color32::from_rgb(20, 20, 25);
-                         visuals.panel_fill = egui::Color32::from_rgb(20, 20, 25);
-                         ui.ctx().set_visuals(visuals);
-                     } else {
-                         ui.ctx().set_visuals(egui::Visuals::light());
-                     }
+                     theme::setup_custom_style(ui.ctx(), dark_mode);
                  }
 
                  ui.add_space(5.0);
@@ -1265,6 +1312,7 @@ impl eframe::App for VoidMicApp {
                      ui.label(egui::RichText::new("ℹ️ Edit in config.json").size(10.0));
                  });
             });
+            }); // ScrollArea
         });
     }
 }
