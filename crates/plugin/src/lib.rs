@@ -189,7 +189,7 @@ impl Plugin for VoidMicPlugin {
 
     fn initialize(
         &mut self,
-        audio_io_layout: &AudioIOLayout,
+        _audio_io_layout: &AudioIOLayout,
         buffer_config: &BufferConfig,
         _context: &mut impl InitContext<Self>,
     ) -> bool {
@@ -201,16 +201,13 @@ impl Plugin for VoidMicPlugin {
             return false;
         }
 
-        let num_channels = audio_io_layout
-            .main_input_channels
-            .map(|c| c.get() as usize)
-            .unwrap_or(2);
-
+        // process() always interleaves to stereo internally, so the processor
+        // and ring buffers must always be sized for 2 channels regardless of layout.
         let (tx, rx) = crossbeam_channel::bounded(2);
         self.spectrum_receiver = Some(rx);
 
         let mut processor = VoidProcessor::new(
-            num_channels,
+            2, // Always stereo: process() duplicates mono to stereo
             2, // VAD Sensitivity (Aggressive)
             (0.0, 0.0, 0.0),
             0.7,
@@ -221,7 +218,7 @@ impl Plugin for VoidMicPlugin {
         self.volume_level = processor.volume_level.clone();
         self.processor = Some(processor);
 
-        let buffer_size = FRAME_SIZE * 4 * num_channels;
+        let buffer_size = FRAME_SIZE * 4 * 2; // Always stereo
 
         // Ringbuf 0.4
         self.rb_in = Some(HeapRb::<f32>::new(buffer_size));
