@@ -313,7 +313,9 @@ impl VoidMicApp {
                     ) {
                         Ok(filter) => self.output_filter_engine = Some(filter),
                         Err(e) => {
-                            log::warn!("Output filter failed to start: {}", e);
+                            log::error!("Output filter failed to start: {}", e);
+                            self.status_msg = format!("Active (output filter error: {})", e);
+                            self.config.output_filter_enabled = false;
                         }
                     }
                 }
@@ -877,7 +879,7 @@ impl VoidMicApp {
                 .engine
                 .as_ref()
                 .unwrap()
-                .jitter_max_us
+                .jitter_ewma_us
                 .load(Ordering::Relaxed);
             ui.add_space(5.0);
             ui.horizontal(|ui| {

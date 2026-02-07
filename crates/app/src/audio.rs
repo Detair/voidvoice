@@ -38,7 +38,7 @@ pub struct AudioEngine {
     pub agc_enabled: Arc<AtomicBool>,
     pub _agc_target: Arc<AtomicU32>, // Kept for potential GUI control
     pub bypass_enabled: Arc<AtomicBool>,
-    pub jitter_max_us: Arc<AtomicU32>,
+    pub jitter_ewma_us: Arc<AtomicU32>,
     pub gate_threshold: Arc<AtomicU32>,
     pub suppression_strength: Arc<AtomicU32>,
     pub dynamic_threshold_enabled: Arc<AtomicBool>,
@@ -136,18 +136,20 @@ impl AudioEngine {
 
         // Build reference capture stream if echo cancellation is enabled
         let reference_stream: Option<cpal::Stream> = if let Some(ref_dev) = &reference_device {
-            let stream = ref_dev.build_input_stream(
+            match ref_dev.build_input_stream(
                 &config,
                 move |data: &[f32], _| {
                     let _ = prod_ref.push_slice(data);
                 },
                 |err| warn!("Reference input error: {}", err),
                 None,
-            ).ok();
-            if stream.is_none() {
-                warn!("Failed to open reference device for echo cancellation");
+            ) {
+                Ok(stream) => Some(stream),
+                Err(e) => {
+                    warn!("Failed to open reference device for echo cancellation: {}", e);
+                    None
+                }
             }
-            stream
         } else {
             None
         };
@@ -216,7 +218,7 @@ impl AudioEngine {
         let agc_enabled_atomic = processor.agc_enabled.clone();
         let agc_target_atomic = processor.agc_target.clone();
         let bypass_enabled_atomic = processor.bypass_enabled.clone();
-        let jitter_atomic = processor.jitter_max_us.clone();
+        let jitter_atomic = processor.jitter_ewma_us.clone();
         let gate_threshold_atomic = processor.gate_threshold.clone();
         let suppression_atomic = processor.suppression_strength.clone();
         let dynamic_threshold_atomic = processor.dynamic_threshold_enabled.clone();
@@ -262,7 +264,7 @@ impl AudioEngine {
                     frames_since_jitter_report += 1;
                     if frames_since_jitter_report >= 50 {
                         processor
-                            .jitter_max_us
+                            .jitter_ewma_us
                             .store(jitter_ewma as u32, Ordering::Relaxed);
                         frames_since_jitter_report = 0;
                     }
@@ -332,7 +334,7 @@ impl AudioEngine {
             suppression_strength: suppression_atomic,
             dynamic_threshold_enabled: dynamic_threshold_atomic,
             _spectrum_sender: spectrum_sender,
-            jitter_max_us: jitter_atomic,
+            jitter_ewma_us: jitter_atomic,
         })
     }
 }

@@ -244,7 +244,7 @@ pub struct VoidProcessor {
     pub agc_enabled: Arc<AtomicBool>,
     pub agc_target: Arc<AtomicU32>,
     pub bypass_enabled: Arc<AtomicBool>,
-    pub jitter_max_us: Arc<AtomicU32>,
+    pub jitter_ewma_us: Arc<AtomicU32>,
     pub gate_threshold: Arc<AtomicU32>,
     pub suppression_strength: Arc<AtomicU32>,
     pub dynamic_threshold_enabled: Arc<AtomicBool>,
@@ -342,7 +342,7 @@ impl VoidProcessor {
             agc_enabled: Arc::new(AtomicBool::new(false)),
             agc_target: Arc::new(AtomicU32::new(agc_target_level.to_bits())),
             bypass_enabled: Arc::new(AtomicBool::new(false)),
-            jitter_max_us: Arc::new(AtomicU32::new(0)),
+            jitter_ewma_us: Arc::new(AtomicU32::new(0)),
             gate_threshold: Arc::new(AtomicU32::new(0.015f32.to_bits())),
             suppression_strength: Arc::new(AtomicU32::new(1.0f32.to_bits())),
             dynamic_threshold_enabled: Arc::new(AtomicBool::new(false)),
@@ -678,12 +678,17 @@ impl VoidProcessor {
                     self.spectrum_out_buf.push(val.val());
                 }
 
-                // Only clone when channel has room to avoid wasted allocation
+                // Only clone when channel has room to avoid wasted Vec allocations
                 if !sender.is_full() {
-                    let _ = sender.try_send((
-                        self.spectrum_in_buf.clone(),
-                        self.spectrum_out_buf.clone(),
-                    ));
+                    if let Err(crossbeam_channel::TrySendError::Disconnected(_)) =
+                        sender.try_send((
+                            self.spectrum_in_buf.clone(),
+                            self.spectrum_out_buf.clone(),
+                        ))
+                    {
+                        log::warn!("Spectrum receiver disconnected, disabling sender");
+                        self.spectrum_sender = None;
+                    }
                 }
             }
         }
