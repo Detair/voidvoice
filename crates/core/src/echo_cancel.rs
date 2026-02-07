@@ -42,7 +42,7 @@ impl EchoCanceller {
             .aec
             .process(mic_input, Some(speaker_ref), false, &mut self.output_buffer)
         {
-            eprintln!("AEC error: {:?}", e);
+            log::warn!("AEC error: {:?}", e);
             output.copy_from_slice(mic_input); // Fallback to raw input
             return false;
         }

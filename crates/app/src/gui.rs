@@ -132,7 +132,7 @@ struct VoidMicApp {
     selected_reference: String,
     // Global Hotkeys
     #[allow(dead_code)] // Manager must be kept alive
-    hotkey_manager: GlobalHotKeyManager,
+    hotkey_manager: Option<GlobalHotKeyManager>,
     hotkey_id: Option<u32>,
     // Wizard State
     show_wizard: bool,
@@ -190,10 +190,14 @@ impl VoidMicApp {
                 .unwrap_or_else(|| "default".to_string())
         };
 
-        let default_ref = inputs
-            .first()
-            .cloned()
-            .unwrap_or_else(|| "default".to_string());
+        let default_ref = if !config.last_reference.is_empty() && inputs.contains(&config.last_reference) {
+            config.last_reference.clone()
+        } else {
+            inputs
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "default".to_string())
+        };
 
         let auto_start = config.auto_start_processing;
         let show_wizard = config.first_run;
@@ -220,7 +224,13 @@ impl VoidMicApp {
             virtual_sink_cached: false,
             last_sink_check: std::time::Instant::now() - std::time::Duration::from_secs(5),
             selected_reference: default_ref,
-            hotkey_manager: GlobalHotKeyManager::new().unwrap(),
+            hotkey_manager: match GlobalHotKeyManager::new() {
+                Ok(m) => Some(m),
+                Err(e) => {
+                    log::warn!("Failed to initialize global hotkey manager: {:?}", e);
+                    None
+                }
+            },
             hotkey_id: None,
             show_wizard,
             wizard_step: WizardStep::Welcome,
@@ -231,11 +241,13 @@ impl VoidMicApp {
         };
 
         // Register Hotkey
-        if let Ok(hotkey) = app.config.toggle_hotkey.parse::<HotKey>() {
-            if app.hotkey_manager.register(hotkey).is_ok() {
-                app.hotkey_id = Some(hotkey.id());
-            } else {
-                log::warn!("Failed to register hotkey: {}", app.config.toggle_hotkey);
+        if let Some(ref manager) = app.hotkey_manager {
+            if let Ok(hotkey) = app.config.toggle_hotkey.parse::<HotKey>() {
+                if manager.register(hotkey).is_ok() {
+                    app.hotkey_id = Some(hotkey.id());
+                } else {
+                    log::warn!("Failed to register hotkey: {}", app.config.toggle_hotkey);
+                }
             }
         }
 
@@ -366,6 +378,7 @@ impl VoidMicApp {
         if self.config_dirty {
             self.config.last_input = self.selected_input.clone();
             self.config.last_output = self.selected_output.clone();
+            self.config.last_reference = self.selected_reference.clone();
             // gate_threshold is already in config from slider updates
             self.config.save();
             self.config_dirty = false;
@@ -375,6 +388,7 @@ impl VoidMicApp {
     fn save_config_now(&mut self) {
         self.config.last_input = self.selected_input.clone();
         self.config.last_output = self.selected_output.clone();
+        self.config.last_reference = self.selected_reference.clone();
         self.config.save();
     }
 
@@ -706,6 +720,7 @@ impl VoidMicApp {
         if self.config.echo_cancel_enabled || self.config.output_filter_enabled {
             ui.horizontal(|ui| {
                 ui.label("Reference Input (Monitor):");
+                let prev_ref = self.selected_reference.clone();
                 egui::ComboBox::from_id_salt("ref_combo")
                     .selected_text(&self.selected_reference)
                     .width(200.0)
@@ -715,6 +730,9 @@ impl VoidMicApp {
                                 ui.selectable_value(&mut self.selected_reference, dev.clone(), dev);
                         }
                     });
+                if self.selected_reference != prev_ref {
+                    self.mark_config_dirty();
+                }
                 ui.label(egui::RichText::new("ℹ️ Select speaker monitor").size(10.0));
             });
         }

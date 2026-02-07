@@ -214,7 +214,7 @@ pub struct VoidProcessor {
     eq: Vec<ThreeBandEq>,
     agc_limiter: LookaheadLimiter,
     noise_floor_tracker: NoiseFloorTracker,
-    vad: Vad,
+    vad_instances: [Vad; 4], // Pre-created for all VadMode variants to avoid RT allocation
     channels: usize,
 
     // State
@@ -228,6 +228,8 @@ pub struct VoidProcessor {
 
     // Current Settings (Locally cached to avoid atomic load every sample)
     current_vad_mode: i32,
+    current_eq_enabled: bool,
+    current_agc_enabled: bool,
     current_eq_low: f32,
     current_eq_mid: f32,
     current_eq_high: f32,
@@ -275,15 +277,12 @@ impl VoidProcessor {
         agc_target_level: f32,
         echo_cancel_enabled: bool,
     ) -> Self {
-        let vad = Vad::new_with_rate_and_mode(
-            webrtc_vad::SampleRate::Rate48kHz,
-            match vad_sensitivity {
-                0 => VadMode::Quality,
-                1 => VadMode::LowBitrate,
-                2 => VadMode::Aggressive,
-                _ => VadMode::VeryAggressive,
-            },
-        );
+        let vad_instances = [
+            Vad::new_with_rate_and_mode(webrtc_vad::SampleRate::Rate48kHz, VadMode::Quality),
+            Vad::new_with_rate_and_mode(webrtc_vad::SampleRate::Rate48kHz, VadMode::LowBitrate),
+            Vad::new_with_rate_and_mode(webrtc_vad::SampleRate::Rate48kHz, VadMode::Aggressive),
+            Vad::new_with_rate_and_mode(webrtc_vad::SampleRate::Rate48kHz, VadMode::VeryAggressive),
+        ];
 
         let mut denoise = Vec::with_capacity(channels);
         let mut echo_canceller = Vec::with_capacity(channels);
@@ -315,7 +314,7 @@ impl VoidProcessor {
             eq,
             agc_limiter: LookaheadLimiter::new(agc_target_level),
             noise_floor_tracker: NoiseFloorTracker::new(),
-            vad,
+            vad_instances,
             channels,
 
             gate_open: false,
@@ -327,6 +326,8 @@ impl VoidProcessor {
             calibration_samples: Vec::with_capacity(300), // Pre-alloc for ~3s calibration
 
             current_vad_mode: vad_sensitivity,
+            current_eq_enabled: true,
+            current_agc_enabled: false,
             current_eq_low: eq_params.0,
             current_eq_mid: eq_params.1,
             current_eq_high: eq_params.2,
@@ -361,14 +362,7 @@ impl VoidProcessor {
         // Check for settings updates
         let new_vad = self.vad_sensitivity.load(Ordering::Relaxed) as i32;
         if new_vad != self.current_vad_mode {
-            self.current_vad_mode = new_vad;
-            let vad_mode = match self.current_vad_mode {
-                0 => VadMode::Quality,
-                1 => VadMode::LowBitrate,
-                2 => VadMode::Aggressive,
-                _ => VadMode::VeryAggressive,
-            };
-            self.vad = Vad::new_with_rate_and_mode(webrtc_vad::SampleRate::Rate48kHz, vad_mode);
+            self.current_vad_mode = new_vad.clamp(0, 3);
         }
 
         if !self.eq.is_empty() {
@@ -402,6 +396,10 @@ impl VoidProcessor {
             }
             _ => {}
         }
+
+        // Cache EQ and AGC enabled state
+        self.current_eq_enabled = self.eq_enabled.load(Ordering::Relaxed);
+        self.current_agc_enabled = self.agc_enabled.load(Ordering::Relaxed);
 
         // Check AGC settings
         let target_bits = self.agc_target.load(Ordering::Relaxed);
@@ -517,7 +515,8 @@ impl VoidProcessor {
                 for i in 0..FRAME_SIZE {
                     vad_buffer[i] = (mono_mix[i] * 32767.0).clamp(-32768.0, 32767.0) as i16;
                 }
-                let is_speech = self.vad.is_voice_segment(&vad_buffer).unwrap_or(false);
+                let vad_idx = self.current_vad_mode.clamp(0, 3) as usize;
+                let is_speech = self.vad_instances[vad_idx].is_voice_segment(&vad_buffer).unwrap_or(false);
 
                 let attack_samples = (SAMPLE_RATE / 1000) * ATTACK_MS;
                 let release_samples = (SAMPLE_RATE / 1000) * RELEASE_MS;
@@ -560,7 +559,7 @@ impl VoidProcessor {
                     }
 
                     // Equalizer
-                    if self.eq_enabled.load(Ordering::Relaxed) {
+                    if self.current_eq_enabled {
                         if let Some(eq) = self.eq.get_mut(i) {
                             for sample in output_ch.iter_mut() {
                                 *sample = eq.process(*sample);
@@ -577,7 +576,7 @@ impl VoidProcessor {
                 }
 
                 // AGC (Linked)
-                if self.agc_enabled.load(Ordering::Relaxed) {
+                if self.current_agc_enabled {
                     self.agc_limiter.process_frame(output_frames);
                 }
             }

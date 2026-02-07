@@ -99,9 +99,13 @@ impl AudioEngine {
                 let dev = if ref_name == "default" {
                     host.default_input_device()
                 } else {
-                    host.input_devices()
-                        .ok()
-                        .and_then(|mut devs| devs.find(|d| d.name().ok().as_deref() == Some(ref_name)))
+                    match host.input_devices() {
+                        Ok(mut devs) => devs.find(|d| d.name().ok().as_deref() == Some(ref_name)),
+                        Err(e) => {
+                            warn!("Failed to enumerate input devices for reference: {}", e);
+                            None
+                        }
+                    }
                 };
                 if let Some(d) = &dev {
                     info!("Using reference device: {}", d.name().unwrap_or_default());
@@ -228,7 +232,7 @@ impl AudioEngine {
 
         let has_reference = echo_cancel_enabled && reference_stream.is_some();
 
-        thread::spawn(move || {
+        thread::Builder::new().name("voidmic-audio".into()).spawn(move || {
             let mut input_frame = [0.0f32; FRAME_SIZE];
             let mut output_frame = [0.0f32; FRAME_SIZE];
             let mut ref_frame = [0.0f32; FRAME_SIZE];
@@ -306,7 +310,7 @@ impl AudioEngine {
                     thread::sleep(Duration::from_micros(200));
                 }
             }
-        });
+        }).context("Failed to spawn audio processing thread")?;
 
         input_stream.play()?;
         output_stream.play()?;
@@ -428,7 +432,7 @@ impl OutputFilterEngine {
         let suppression_atomic = Arc::new(AtomicU32::new(suppression_strength.to_bits()));
         let suppression_for_thread = suppression_atomic.clone();
 
-        thread::spawn(move || {
+        thread::Builder::new().name("voidmic-output-filter".into()).spawn(move || {
             let mut denoise = DenoiseState::new();
             let mut input_frame = [0.0f32; FRAME_SIZE];
             let mut output_frame = [0.0f32; FRAME_SIZE];
@@ -462,7 +466,7 @@ impl OutputFilterEngine {
                     thread::sleep(Duration::from_micros(500));
                 }
             }
-        });
+        }).context("Failed to spawn output filter thread")?;
 
         input_stream.play()?;
         output_stream.play()?;

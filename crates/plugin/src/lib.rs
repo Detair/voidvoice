@@ -133,9 +133,10 @@ impl Plugin for VoidMicPlugin {
         create_egui_editor(
             self.params.editor_state.clone(),
             gui_data,
-            |_, _| {},
-            move |egui_ctx, setter, state| {
+            |egui_ctx, _| {
                 theme::setup_custom_style(egui_ctx, true);
+            },
+            move |egui_ctx, setter, state| {
 
                 egui::CentralPanel::default().show(egui_ctx, |ui| {
                     ui.heading("VoidMic Plugin");
@@ -306,10 +307,10 @@ impl Plugin for VoidMicPlugin {
                     let l = rb_out.try_pop().unwrap_or(0.0);
                     let r = rb_out.try_pop().unwrap_or(0.0);
 
-                    if num_channels >= 1 {
+                    if num_channels == 1 {
+                        channel_data[0][i] = (l + r) * 0.5;
+                    } else {
                         channel_data[0][i] = l;
-                    } // If output is mono, take left? Or mix? Left is safer.
-                    if num_channels >= 2 {
                         channel_data[1][i] = r;
                     }
                 }
