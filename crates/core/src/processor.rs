@@ -240,10 +240,11 @@ pub struct VoidProcessor {
     pub eq_low_gain: Arc<AtomicU32>,
     pub eq_mid_gain: Arc<AtomicU32>,
     pub eq_high_gain: Arc<AtomicU32>,
+    pub eq_enabled: Arc<AtomicBool>,
     pub agc_enabled: Arc<AtomicBool>,
     pub agc_target: Arc<AtomicU32>,
     pub bypass_enabled: Arc<AtomicBool>,
-    pub jitter_max_us: Arc<AtomicU32>,
+    pub jitter_ewma_us: Arc<AtomicU32>,
     pub gate_threshold: Arc<AtomicU32>,
     pub suppression_strength: Arc<AtomicU32>,
     pub dynamic_threshold_enabled: Arc<AtomicBool>,
@@ -258,10 +259,12 @@ pub struct VoidProcessor {
     windowed_out: [f32; FRAME_SIZE],
 }
 
-// Safety: VoidProcessor owns all its mutable state (Vad, EchoCanceller, DenoiseState) and is moved
-// to a single audio thread. The only cross-thread access is through the Arc<Atomic*> fields,
-// which are inherently thread-safe. VoidProcessor must NOT be shared via &reference across threads
-// (no Sync), only moved (Send).
+// SAFETY: VoidProcessor owns all its mutable state (Vad, EchoCanceller, DenoiseState)
+// and is moved to a single audio processing thread. These types use raw pointers internally
+// (preventing auto-Send), but are safe to move across threads since they are exclusively
+// owned and never aliased. The only cross-thread access is through Arc<Atomic*> fields,
+// which are inherently thread-safe. VoidProcessor must NOT be shared via &reference
+// across threads (it does not implement Sync), only moved (Send).
 unsafe impl Send for VoidProcessor {}
 
 impl VoidProcessor {
@@ -335,10 +338,11 @@ impl VoidProcessor {
             eq_low_gain: Arc::new(AtomicU32::new(eq_params.0.to_bits())),
             eq_mid_gain: Arc::new(AtomicU32::new(eq_params.1.to_bits())),
             eq_high_gain: Arc::new(AtomicU32::new(eq_params.2.to_bits())),
+            eq_enabled: Arc::new(AtomicBool::new(true)),
             agc_enabled: Arc::new(AtomicBool::new(false)),
             agc_target: Arc::new(AtomicU32::new(agc_target_level.to_bits())),
             bypass_enabled: Arc::new(AtomicBool::new(false)),
-            jitter_max_us: Arc::new(AtomicU32::new(0)),
+            jitter_ewma_us: Arc::new(AtomicU32::new(0)),
             gate_threshold: Arc::new(AtomicU32::new(0.015f32.to_bits())),
             suppression_strength: Arc::new(AtomicU32::new(1.0f32.to_bits())),
             dynamic_threshold_enabled: Arc::new(AtomicBool::new(false)),
@@ -556,9 +560,11 @@ impl VoidProcessor {
                     }
 
                     // Equalizer
-                    if let Some(eq) = self.eq.get_mut(i) {
-                        for sample in output_ch.iter_mut() {
-                            *sample = eq.process(*sample);
+                    if self.eq_enabled.load(Ordering::Relaxed) {
+                        if let Some(eq) = self.eq.get_mut(i) {
+                            for sample in output_ch.iter_mut() {
+                                *sample = eq.process(*sample);
+                            }
                         }
                     }
                 }
@@ -672,9 +678,18 @@ impl VoidProcessor {
                     self.spectrum_out_buf.push(val.val());
                 }
 
-                // Clone to send (channel requires owned data)
-                let _ =
-                    sender.try_send((self.spectrum_in_buf.clone(), self.spectrum_out_buf.clone()));
+                // Only clone when channel has room to avoid wasted Vec allocations
+                if !sender.is_full() {
+                    if let Err(crossbeam_channel::TrySendError::Disconnected(_)) =
+                        sender.try_send((
+                            self.spectrum_in_buf.clone(),
+                            self.spectrum_out_buf.clone(),
+                        ))
+                    {
+                        log::warn!("Spectrum receiver disconnected, disabling sender");
+                        self.spectrum_sender = None;
+                    }
+                }
             }
         }
         } // spectrum throttle

@@ -2,7 +2,7 @@ use lv2::prelude::*;
 use ringbuf::traits::{Consumer, Observer, Producer};
 use ringbuf::HeapRb;
 use std::sync::atomic::Ordering;
-use voidmic_core::constants::FRAME_SIZE;
+use voidmic_core::constants::{FRAME_SIZE, SAMPLE_RATE};
 use voidmic_core::VoidProcessor;
 
 #[derive(PortCollection)]
@@ -34,6 +34,16 @@ impl Plugin for VoidMic {
     type AudioFeatures = ();
 
     fn new(_info: &PluginInfo, _features: &mut ()) -> Option<Self> {
+        // Validate sample rate - VoidMic requires 48kHz
+        if _info.sample_rate() as u32 != SAMPLE_RATE {
+            eprintln!(
+                "VoidMic LV2: requires {}Hz sample rate, host is using {}Hz",
+                SAMPLE_RATE,
+                _info.sample_rate()
+            );
+            return None;
+        }
+
         let processor = VoidProcessor::new(
             2,               // Channels: Stereo
             2,               // VAD sensitivity: Aggressive
