@@ -54,6 +54,9 @@ pub struct AppConfig {
     #[serde(default = "default_agc_target")]
     pub agc_target_level: f32,
 
+    #[serde(default)]
+    pub last_reference: String,
+
     // Phase 6
     #[serde(default)]
     pub mini_mode: bool,
@@ -117,6 +120,7 @@ impl Default for AppConfig {
             eq_high_gain: 0.0,
             agc_enabled: false,
             agc_target_level: default_agc_target(),
+            last_reference: String::new(),
             mini_mode: false,
         }
     }
@@ -202,6 +206,7 @@ mod tests {
             eq_high_gain: 0.0,
             agc_enabled: false,
             agc_target_level: 0.7,
+            last_reference: String::new(),
             mini_mode: false,
         };
 
@@ -250,6 +255,7 @@ mod tests {
             eq_high_gain: 0.0,
             agc_enabled: true,
             agc_target_level: 0.8,
+            last_reference: "Monitor of Speakers".to_string(),
             mini_mode: true,
         };
 

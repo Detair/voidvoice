@@ -101,7 +101,7 @@ impl Plugin for VoidMic {
                 None,
                 suppression,
                 threshold,
-                true,
+                false, // Use explicit threshold from control port, not dynamic
             );
 
             for j in 0..FRAME_SIZE {
