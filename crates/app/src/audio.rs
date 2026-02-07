@@ -38,6 +38,9 @@ pub struct AudioEngine {
     pub _agc_target: Arc<AtomicU32>, // Kept for potential GUI control
     pub bypass_enabled: Arc<AtomicBool>,
     pub jitter_max_us: Arc<AtomicU32>,
+    pub gate_threshold: Arc<AtomicU32>,
+    pub suppression_strength: Arc<AtomicU32>,
+    pub dynamic_threshold_enabled: Arc<AtomicBool>,
     pub _spectrum_sender: Option<Sender<(Vec<f32>, Vec<f32>)>>,
 }
 
@@ -184,11 +187,16 @@ impl AudioEngine {
             echo_cancel_enabled,
         );
 
-        // Set initial state
-        // processor.gate_threshold is passed in process_frame, we don't set it here explicitly?
-        // Wait, processor doesn't store threshold. It's passed in process_frame.
-        // But we need it for the thread loop?
-        // In the thread loop: start with the `gate_threshold` argument.
+        // Set initial state via atomics (live-updatable from GUI)
+        processor
+            .gate_threshold
+            .store(gate_threshold.to_bits(), Ordering::Relaxed);
+        processor
+            .suppression_strength
+            .store(suppression_strength.to_bits(), Ordering::Relaxed);
+        processor
+            .dynamic_threshold_enabled
+            .store(dynamic_threshold_enabled, Ordering::Relaxed);
         processor.agc_enabled.store(agc_enabled, Ordering::Relaxed);
         processor
             .bypass_enabled
@@ -209,6 +217,9 @@ impl AudioEngine {
         let agc_target_atomic = processor.agc_target.clone();
         let bypass_enabled_atomic = processor.bypass_enabled.clone();
         let jitter_atomic = processor.jitter_max_us.clone();
+        let gate_threshold_atomic = processor.gate_threshold.clone();
+        let suppression_atomic = processor.suppression_strength.clone();
+        let dynamic_threshold_atomic = processor.dynamic_threshold_enabled.clone();
 
         let is_running = Arc::new(AtomicBool::new(true));
         let run_flag = is_running.clone();
@@ -270,14 +281,14 @@ impl AudioEngine {
                         None
                     };
 
-                    // Process Audio
+                    // Process Audio (read live values from atomics)
                     processor.process_frame(
                         &[&input_frame],
                         &mut [&mut output_frame],
                         ref_frames,
-                        suppression_strength,
-                        gate_threshold,
-                        dynamic_threshold_enabled,
+                        f32::from_bits(processor.suppression_strength.load(Ordering::Relaxed)),
+                        f32::from_bits(processor.gate_threshold.load(Ordering::Relaxed)),
+                        processor.dynamic_threshold_enabled.load(Ordering::Relaxed),
                     );
 
                     // Write Audio
@@ -312,6 +323,9 @@ impl AudioEngine {
             agc_enabled: agc_enabled_atomic,
             _agc_target: agc_target_atomic,
             bypass_enabled: bypass_enabled_atomic,
+            gate_threshold: gate_threshold_atomic,
+            suppression_strength: suppression_atomic,
+            dynamic_threshold_enabled: dynamic_threshold_atomic,
             _spectrum_sender: spectrum_sender,
             jitter_max_us: jitter_atomic,
         })
