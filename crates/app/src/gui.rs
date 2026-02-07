@@ -124,6 +124,8 @@ struct VoidMicApp {
     virtual_sink_module_id: Option<u32>,
     connected_apps: Vec<String>,
     last_app_refresh: std::time::Instant,
+    virtual_sink_cached: bool,
+    last_sink_check: std::time::Instant,
     // Output Filter (Speaker Denoising)
     output_filter_engine: Option<OutputFilterEngine>,
     // Echo Cancellation
@@ -211,6 +213,8 @@ impl VoidMicApp {
             connected_apps: Vec::new(),
             output_filter_engine: None,
             last_app_refresh: std::time::Instant::now(),
+            virtual_sink_cached: false,
+            last_sink_check: std::time::Instant::now() - std::time::Duration::from_secs(5),
             selected_reference: default_ref,
             hotkey_manager: GlobalHotKeyManager::new().unwrap(),
             hotkey_id: None,
@@ -375,6 +379,13 @@ impl VoidMicApp {
             // Output filter is user preference
             self.config.preset = preset_name.to_string();
             self.save_config_now();
+
+            // Update running engine immediately
+            if let Some(engine) = &self.engine {
+                engine.gate_threshold.store(self.config.gate_threshold.to_bits(), Ordering::Relaxed);
+                engine.suppression_strength.store(self.config.suppression_strength.to_bits(), Ordering::Relaxed);
+                engine.dynamic_threshold_enabled.store(self.config.dynamic_threshold_enabled, Ordering::Relaxed);
+            }
         }
     }
 
@@ -460,9 +471,13 @@ impl VoidMicApp {
 
         ui.add_space(10.0);
 
-        // One-Click Setup Section
+        // One-Click Setup Section (cache pactl check, refresh every 2 seconds)
+        if self.last_sink_check.elapsed().as_secs() >= 2 {
+            self.virtual_sink_cached = virtual_device::virtual_sink_exists();
+            self.last_sink_check = std::time::Instant::now();
+        }
         ui.horizontal(|ui| {
-            let sink_exists = virtual_device::virtual_sink_exists();
+            let sink_exists = self.virtual_sink_cached;
 
             if sink_exists {
                 ui.colored_label(egui::Color32::GREEN, "✔ Virtual Mic Active");
@@ -551,6 +566,9 @@ impl VoidMicApp {
             {
                 self.config.preset = "Custom".to_string();
                 self.mark_config_dirty();
+                if let Some(engine) = &self.engine {
+                    engine.dynamic_threshold_enabled.store(self.config.dynamic_threshold_enabled, Ordering::Relaxed);
+                }
             }
 
             ui.add_enabled_ui(!self.config.dynamic_threshold_enabled, |ui| {
@@ -561,6 +579,9 @@ impl VoidMicApp {
                 if ui.add(slider).changed() {
                     self.config.preset = "Custom".to_string();
                     self.mark_config_dirty();
+                    if let Some(engine) = &self.engine {
+                        engine.gate_threshold.store(self.config.gate_threshold.to_bits(), Ordering::Relaxed);
+                    }
                 }
             });
 
@@ -588,6 +609,9 @@ impl VoidMicApp {
             if ui.add(slider).changed() {
                 self.config.preset = "Custom".to_string();
                 self.mark_config_dirty();
+                if let Some(engine) = &self.engine {
+                    engine.suppression_strength.store(self.config.suppression_strength.to_bits(), Ordering::Relaxed);
+                }
             }
         });
     }
@@ -600,6 +624,7 @@ impl VoidMicApp {
                     let result = f32::from_bits(engine.calibration_result.load(Ordering::Relaxed));
                     if result > 0.0 {
                         self.config.gate_threshold = result;
+                        engine.gate_threshold.store(result.to_bits(), Ordering::Relaxed);
                         self.save_config_now();
                         self.status_msg = format!("Calibrated! Threshold set to {:.3}", result);
                     }

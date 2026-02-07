@@ -5,7 +5,6 @@ use biquad::{Biquad, Coefficients, DirectForm2Transposed, ToHertz, Type};
 use crossbeam_channel::Sender;
 use nnnoiseless::DenoiseState;
 use spectrum_analyzer::scaling::divide_by_N_sqrt;
-use spectrum_analyzer::windows::hann_window;
 use spectrum_analyzer::{samples_fft_to_spectrum, FrequencyLimit};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
@@ -245,12 +244,18 @@ pub struct VoidProcessor {
     pub agc_target: Arc<AtomicU32>,
     pub bypass_enabled: Arc<AtomicBool>,
     pub jitter_max_us: Arc<AtomicU32>,
+    pub gate_threshold: Arc<AtomicU32>,
+    pub suppression_strength: Arc<AtomicU32>,
+    pub dynamic_threshold_enabled: Arc<AtomicBool>,
     pub spectrum_sender: Option<Sender<(Vec<f32>, Vec<f32>)>>,
 
     // Pre-allocated spectrum buffers (avoid allocations in audio thread)
     spectrum_in_buf: Vec<f32>,
     spectrum_out_buf: Vec<f32>,
     spectrum_frame_counter: u32,
+    hann_coefficients: [f32; FRAME_SIZE],
+    windowed_in: [f32; FRAME_SIZE],
+    windowed_out: [f32; FRAME_SIZE],
 }
 
 // Safety: VoidProcessor owns all its mutable state (Vad, EchoCanceller, DenoiseState) and is moved
@@ -280,6 +285,14 @@ impl VoidProcessor {
         let mut denoise = Vec::with_capacity(channels);
         let mut echo_canceller = Vec::with_capacity(channels);
         let mut eq = Vec::with_capacity(channels);
+
+        // Pre-compute Hann window coefficients (periodic form matching spectrum-analyzer crate)
+        let mut hann_coefficients = [0.0f32; FRAME_SIZE];
+        for (i, coeff) in hann_coefficients.iter_mut().enumerate() {
+            *coeff = 0.5
+                * (1.0
+                    - (2.0 * std::f32::consts::PI * i as f32 / FRAME_SIZE as f32).cos());
+        }
 
         for _ in 0..channels {
             denoise.push(DenoiseState::new());
@@ -326,11 +339,17 @@ impl VoidProcessor {
             agc_target: Arc::new(AtomicU32::new(agc_target_level.to_bits())),
             bypass_enabled: Arc::new(AtomicBool::new(false)),
             jitter_max_us: Arc::new(AtomicU32::new(0)),
+            gate_threshold: Arc::new(AtomicU32::new(0.015f32.to_bits())),
+            suppression_strength: Arc::new(AtomicU32::new(1.0f32.to_bits())),
+            dynamic_threshold_enabled: Arc::new(AtomicBool::new(false)),
             spectrum_sender: None,
             // Pre-allocate spectrum buffers (FRAME_SIZE/2 bins typical for FFT)
             spectrum_in_buf: Vec::with_capacity(FRAME_SIZE / 2),
             spectrum_out_buf: Vec::with_capacity(FRAME_SIZE / 2),
             spectrum_frame_counter: 0,
+            hann_coefficients,
+            windowed_in: [0.0; FRAME_SIZE],
+            windowed_out: [0.0; FRAME_SIZE],
         }
     }
 
@@ -619,18 +638,22 @@ impl VoidProcessor {
                 input_mono[j] *= norm_factor;
             }
 
-            let window_in = hann_window(&input_mono);
+            // Apply Hann window using pre-computed coefficients (avoids Vec allocation)
+            for j in 0..FRAME_SIZE {
+                self.windowed_in[j] = input_mono[j] * self.hann_coefficients[j];
+                self.windowed_out[j] = mono_mix[j] * self.hann_coefficients[j];
+            }
+
             let input_spectrum = samples_fft_to_spectrum(
-                &window_in,
+                &self.windowed_in,
                 SAMPLE_RATE,
                 FrequencyLimit::Range(20.0, 20_000.0),
                 Some(&divide_by_N_sqrt),
             )
             .ok();
 
-            let window_out = hann_window(&mono_mix);
             let output_spectrum = samples_fft_to_spectrum(
-                &window_out,
+                &self.windowed_out,
                 SAMPLE_RATE,
                 FrequencyLimit::Range(20.0, 20_000.0),
                 Some(&divide_by_N_sqrt),
