@@ -23,6 +23,11 @@ struct VoidMic {
     rb_out: HeapRb<f32>,
 }
 
+// Safety: LV2 hosts guarantee that Plugin::run() is called from a single audio thread.
+// The VoidMic struct is never actually shared across threads — the Sync bound is a
+// requirement of the lv2::Plugin trait but not exercised at runtime.
+unsafe impl Sync for VoidMic {}
+
 impl Plugin for VoidMic {
     type Ports = VoidMicPorts;
     type InitFeatures = ();

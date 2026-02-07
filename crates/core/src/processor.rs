@@ -246,10 +246,11 @@ pub struct VoidProcessor {
     spectrum_out_buf: Vec<f32>,
 }
 
-// Safety: VoidProcessor owns all its raw pointers (Vad, EchoCanceller) and is moved to a single thread.
-// It is not shared between threads (except for the Atomics, which are thread-safe).
+// Safety: VoidProcessor owns all its mutable state (Vad, EchoCanceller, DenoiseState) and is moved
+// to a single audio thread. The only cross-thread access is through the Arc<Atomic*> fields,
+// which are inherently thread-safe. VoidProcessor must NOT be shared via &reference across threads
+// (no Sync), only moved (Send).
 unsafe impl Send for VoidProcessor {}
-unsafe impl Sync for VoidProcessor {}
 
 impl VoidProcessor {
     pub fn new(

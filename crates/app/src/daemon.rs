@@ -13,8 +13,11 @@ fn pid_file_path() -> Option<PathBuf> {
     ProjectDirs::from("com", "voidmic", "voidmic").map(|dirs| dirs.data_dir().join(PID_FILENAME))
 }
 
-/// Writes the current process ID to the PID file.
-pub fn write_pid_file() -> Result<(), String> {
+/// Writes the given process ID to the PID file.
+///
+/// # Arguments
+/// * `pid` - The process ID to write (typically the child/daemon process ID)
+pub fn write_pid_file(pid: u32) -> Result<(), String> {
     let path = pid_file_path().ok_or("Could not determine data directory")?;
 
     if let Some(parent) = path.parent() {
@@ -22,7 +25,6 @@ pub fn write_pid_file() -> Result<(), String> {
             .map_err(|e| format!("Failed to create data directory: {}", e))?;
     }
 
-    let pid = std::process::id();
     fs::write(&path, pid.to_string()).map_err(|e| format!("Failed to write PID file: {}", e))?;
 
     Ok(())

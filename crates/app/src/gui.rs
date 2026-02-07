@@ -251,7 +251,7 @@ impl VoidMicApp {
             self.config.gate_threshold,
             self.config.suppression_strength,
             self.config.echo_cancel_enabled,
-            None,
+            if self.config.echo_cancel_enabled { Some(self.selected_reference.as_str()) } else { None },
             self.config.dynamic_threshold_enabled,
             self.config.vad_sensitivity,
             self.config.eq_enabled,

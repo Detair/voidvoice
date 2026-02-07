@@ -84,26 +84,32 @@ pub fn create_virtual_sink() -> Result<VirtualDevice, String> {
 }
 
 /// Destroys a virtual sink by module ID.
+///
+/// If `module_id` is 0 (unknown), looks up the specific module ID for VoidMic_Clean
+/// rather than unloading all null-sink modules on the system.
 pub fn destroy_virtual_sink(module_id: u32) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
-        if module_id == 0 {
-            // Unknown module ID, try to unload by sink name
-            let _ = Command::new("pactl")
-                .args(["unload-module", "module-null-sink"])
-                .output();
-            return Ok(());
+        let effective_id = if module_id == 0 {
+            // Find VoidMic_Clean's specific module ID instead of unloading all null-sinks
+            find_voidmic_module_id().unwrap_or(0)
+        } else {
+            module_id
+        };
+
+        if effective_id == 0 {
+            return Err("Could not find VoidMic_Clean module to unload".to_string());
         }
 
         let result = Command::new("pactl")
-            .args(["unload-module", &module_id.to_string()])
+            .args(["unload-module", &effective_id.to_string()])
             .output()
             .map_err(|e| format!("Failed to unload module: {}", e))?;
 
         if result.status.success() {
             Ok(())
         } else {
-            // Ignore errors on cleanup
+            // Ignore errors on cleanup (module may have already been unloaded)
             Ok(())
         }
     }
@@ -113,6 +119,28 @@ pub fn destroy_virtual_sink(module_id: u32) -> Result<(), String> {
         let _ = module_id;
         Ok(()) // No-op on other platforms
     }
+}
+
+/// Finds the PulseAudio module ID for the VoidMic_Clean null-sink.
+#[cfg(target_os = "linux")]
+fn find_voidmic_module_id() -> Option<u32> {
+    let output = Command::new("pactl")
+        .args(["list", "short", "modules"])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    for line in text.lines() {
+        // Format: "ID\tmodule-null-sink\tsink_name=VoidMic_Clean ..."
+        if line.contains("module-null-sink") && line.contains(VIRTUAL_SINK_NAME) {
+            return line.split_whitespace().next()?.parse().ok();
+        }
+    }
+    None
 }
 
 /// Checks if virtual sink exists.

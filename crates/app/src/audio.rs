@@ -50,7 +50,7 @@ impl AudioEngine {
         gate_threshold: f32,
         suppression_strength: f32,
         echo_cancel_enabled: bool,
-        _reference_device_name: Option<&str>,
+        reference_device_name: Option<&str>,
         dynamic_threshold_enabled: bool,
         vad_sensitivity: i32,
         eq_enabled: bool,
@@ -89,6 +89,27 @@ impl AudioEngine {
             output_device.name().unwrap_or_default()
         );
 
+        // Resolve reference device for echo cancellation
+        let reference_device = if echo_cancel_enabled {
+            if let Some(ref_name) = reference_device_name {
+                let dev = if ref_name == "default" {
+                    host.default_input_device()
+                } else {
+                    host.input_devices()
+                        .ok()
+                        .and_then(|mut devs| devs.find(|d| d.name().ok().as_deref() == Some(ref_name)))
+                };
+                if let Some(d) = &dev {
+                    info!("Using reference device: {}", d.name().unwrap_or_default());
+                }
+                dev
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         let config = cpal::StreamConfig {
             channels: 1,
             sample_rate: cpal::SampleRate(SAMPLE_RATE),
@@ -97,7 +118,6 @@ impl AudioEngine {
 
         // Latency management (100ms buffer)
         let buffer_size = (SAMPLE_RATE as usize) / 10;
-        let _latency_frames = buffer_size; // For clarity, though unused
 
         // Ring buffers
         let rb_in = HeapRb::<f32>::new(buffer_size);
@@ -106,7 +126,27 @@ impl AudioEngine {
         let rb_out = HeapRb::<f32>::new(buffer_size);
         let (mut prod_out, mut cons_out) = rb_out.split();
 
-        let _reference_stream: Option<cpal::Stream> = None;
+        // Reference ring buffer for echo cancellation
+        let rb_ref = HeapRb::<f32>::new(buffer_size);
+        let (mut prod_ref, mut cons_ref) = rb_ref.split();
+
+        // Build reference capture stream if echo cancellation is enabled
+        let reference_stream: Option<cpal::Stream> = if let Some(ref_dev) = &reference_device {
+            let stream = ref_dev.build_input_stream(
+                &config,
+                move |data: &[f32], _| {
+                    let _ = prod_ref.push_slice(data);
+                },
+                |err| warn!("Reference input error: {}", err),
+                None,
+            ).ok();
+            if stream.is_none() {
+                warn!("Failed to open reference device for echo cancellation");
+            }
+            stream
+        } else {
+            None
+        };
 
         let input_stream = input_device.build_input_stream(
             &config,
@@ -173,9 +213,12 @@ impl AudioEngine {
         let is_running = Arc::new(AtomicBool::new(true));
         let run_flag = is_running.clone();
 
+        let has_reference = echo_cancel_enabled && reference_stream.is_some();
+
         thread::spawn(move || {
             let mut input_frame = [0.0f32; FRAME_SIZE];
             let mut output_frame = [0.0f32; FRAME_SIZE];
+            let mut ref_frame = [0.0f32; FRAME_SIZE];
 
             // Jitter State
             let mut last_loop_time = std::time::Instant::now();
@@ -219,11 +262,19 @@ impl AudioEngine {
                     // Read Audio
                     cons_in.pop_slice(&mut input_frame);
 
+                    // Read reference audio for echo cancellation
+                    let ref_frames = if has_reference && cons_ref.occupied_len() >= FRAME_SIZE {
+                        cons_ref.pop_slice(&mut ref_frame);
+                        Some(&[&ref_frame[..]][..])
+                    } else {
+                        None
+                    };
+
                     // Process Audio
                     processor.process_frame(
                         &[&input_frame],
                         &mut [&mut output_frame],
-                        None, // No reference frame yet
+                        ref_frames,
                         suppression_strength,
                         gate_threshold,
                         dynamic_threshold_enabled,
@@ -242,11 +293,14 @@ impl AudioEngine {
 
         input_stream.play()?;
         output_stream.play()?;
+        if let Some(ref ref_stream) = reference_stream {
+            ref_stream.play()?;
+        }
 
         Ok(Self {
             _input_stream: input_stream,
             _output_stream: output_stream,
-            _reference_stream: None,
+            _reference_stream: reference_stream,
             is_running,
             volume_level,
             calibration_mode,

@@ -125,7 +125,7 @@ fn main() -> Result<()> {
                             Ok(c) => {
                                 // Write PID file for the child process
                                 let child_pid = c.id();
-                                if let Err(e) = daemon::write_pid_file() {
+                                if let Err(e) = daemon::write_pid_file(child_pid) {
                                     eprintln!("Warning: Could not write PID file: {}", e);
                                 }
                                 println!("✓ VoidMic started in background (PID: {})", child_pid);
