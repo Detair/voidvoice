@@ -12,16 +12,15 @@ pub struct EchoCanceller {
 }
 
 impl EchoCanceller {
-    /// Creates a new echo canceller.
-    pub fn new() -> Self {
-        // Create AEC3 with default settings (48kHz, 1 channel)
+    /// Creates a new echo canceller. Returns None if AEC3 initialization fails.
+    pub fn new() -> Option<Self> {
         let aec = VoipAec3::builder(SAMPLE_RATE as usize, 1, 1)
             .build()
-            .expect("Failed to create AEC3");
-        Self {
+            .ok()?;
+        Some(Self {
             aec,
             output_buffer: [0.0; FRAME_SIZE],
-        }
+        })
     }
 
     /// Processes a frame of audio with echo cancellation.
@@ -52,18 +51,17 @@ impl EchoCanceller {
         true
     }
 
-    /// Resets the echo canceller state.
+    /// Resets the echo canceller state. Returns false if re-initialization fails.
     #[allow(dead_code)]
-    pub fn reset(&mut self) {
-        self.aec = VoipAec3::builder(SAMPLE_RATE as usize, 1, 1)
-            .build()
-            .expect("Failed to reset AEC3");
+    pub fn reset(&mut self) -> bool {
+        match VoipAec3::builder(SAMPLE_RATE as usize, 1, 1).build() {
+            Ok(aec) => {
+                self.aec = aec;
+                true
+            }
+            Err(_) => false,
+        }
     }
 }
 
-impl Default for EchoCanceller {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 

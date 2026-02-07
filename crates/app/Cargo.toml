@@ -52,11 +52,11 @@ semver = "1.0.27"
 eframe = { version = "0.31", optional = true }
 tray-icon = { version = "0.21.3", default-features = false, optional = true }
 muda = { version = "0.17.1", default-features = false, features = ["gtk"], optional = true }
-global-hotkey = "0.7.0"
-image = { version = "0.24", default-features = false, features = ["png", "jpeg"] }
+global-hotkey = { version = "0.7.0", optional = true }
+image = { version = "0.24", default-features = false, features = ["png", "jpeg"], optional = true }
 crossbeam-channel = "0.5.15" # Needed for receiving from core
-egui_plot = "0.31"
+egui_plot = { version = "0.31", optional = true }
 
 [features]
 default = ["gui"]
-gui = ["eframe", "tray-icon", "muda"]
+gui = ["eframe", "tray-icon", "muda", "global-hotkey", "egui_plot", "image"]

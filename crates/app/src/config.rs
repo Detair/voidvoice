@@ -1,4 +1,5 @@
 use directories::ProjectDirs;
+use log::warn;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -136,13 +137,23 @@ impl AppConfig {
 
     /// Saves configuration to disk in JSON format.
     pub fn save(&self) {
-        if let Some(path) = config_path() {
-            if let Some(parent) = path.parent() {
-                let _ = fs::create_dir_all(parent);
+        let Some(path) = config_path() else {
+            warn!("Could not determine config path");
+            return;
+        };
+        if let Some(parent) = path.parent() {
+            if let Err(e) = fs::create_dir_all(parent) {
+                warn!("Failed to create config directory: {}", e);
+                return;
             }
-            if let Ok(json) = serde_json::to_string_pretty(self) {
-                let _ = fs::write(path, json);
+        }
+        match serde_json::to_string_pretty(self) {
+            Ok(json) => {
+                if let Err(e) = fs::write(&path, json) {
+                    warn!("Failed to write config file: {}", e);
+                }
             }
+            Err(e) => warn!("Failed to serialize config: {}", e),
         }
     }
 }

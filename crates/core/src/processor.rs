@@ -17,16 +17,22 @@ const RELEASE_MS: u32 = 200;
 const FADE_MS: u32 = 10;
 
 /// Tracks minimum RMS over a sliding window to estimate noise floor.
-/// Uses a fixed-size ring buffer to avoid allocations.
+/// Uses a fixed-size ring buffer (3s at 100 frames/sec) to avoid allocations.
 pub struct NoiseFloorTracker {
-    window: [f32; 300], // Fixed 3s @ 100 frames/sec
+    window: [f32; 300],
     write_idx: usize,
     count: usize,
     current_floor: f32,
 }
 
+impl Default for NoiseFloorTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NoiseFloorTracker {
-    pub fn new(_window_seconds: f32) -> Self {
+    pub fn new() -> Self {
         Self {
             window: [0.0; 300],
             write_idx: 0,
@@ -47,7 +53,7 @@ impl NoiseFloorTracker {
         if self.count >= 10 {
             // Find minimum in recent samples (last 30 = ~300ms)
             let start = if self.count >= 30 {
-                self.write_idx.wrapping_sub(30) % 300
+                (self.write_idx + 300 - 30) % 300
             } else {
                 0
             };
@@ -244,6 +250,7 @@ pub struct VoidProcessor {
     // Pre-allocated spectrum buffers (avoid allocations in audio thread)
     spectrum_in_buf: Vec<f32>,
     spectrum_out_buf: Vec<f32>,
+    spectrum_frame_counter: u32,
 }
 
 // Safety: VoidProcessor owns all its mutable state (Vad, EchoCanceller, DenoiseState) and is moved
@@ -277,7 +284,9 @@ impl VoidProcessor {
         for _ in 0..channels {
             denoise.push(DenoiseState::new());
             if echo_cancel_enabled {
-                echo_canceller.push(EchoCanceller::new());
+                if let Some(aec) = EchoCanceller::new() {
+                    echo_canceller.push(aec);
+                }
             }
             if let Ok(e) = ThreeBandEq::new(eq_params.0, eq_params.1, eq_params.2) {
                 eq.push(e);
@@ -289,7 +298,7 @@ impl VoidProcessor {
             echo_canceller,
             eq,
             agc_limiter: LookaheadLimiter::new(agc_target_level),
-            noise_floor_tracker: NoiseFloorTracker::new(3.0),
+            noise_floor_tracker: NoiseFloorTracker::new(),
             vad,
             channels,
 
@@ -321,6 +330,7 @@ impl VoidProcessor {
             // Pre-allocate spectrum buffers (FRAME_SIZE/2 bins typical for FFT)
             spectrum_in_buf: Vec::with_capacity(FRAME_SIZE / 2),
             spectrum_out_buf: Vec::with_capacity(FRAME_SIZE / 2),
+            spectrum_frame_counter: 0,
         }
     }
 
@@ -508,9 +518,10 @@ impl VoidProcessor {
                 }
 
                 // 4. Apply Gate & EQ & AGC to ALL channels
+                let mut final_fade = self.fade_position;
                 for (i, output_ch) in output_frames.iter_mut().enumerate().take(channels) {
 
-                    // Gate
+                    // Gate (each channel uses same fade envelope)
                     if !self.gate_open {
                         let mut local_fade = self.fade_position;
                         for sample in output_ch.iter_mut() {
@@ -522,6 +533,7 @@ impl VoidProcessor {
                                 *sample = 0.0;
                             }
                         }
+                        final_fade = local_fade;
                     }
 
                     // Equalizer
@@ -532,11 +544,9 @@ impl VoidProcessor {
                     }
                 }
 
-                // Update global fade position once
+                // Update global fade position from per-sample tracking
                 if !self.gate_open {
-                    if self.fade_position < fade_samples {
-                        self.fade_position += FRAME_SIZE as u32; // This is rough, per-sample fade below is better
-                    }
+                    self.fade_position = final_fade;
                 } else {
                     self.fade_position = 0;
                 }
@@ -593,7 +603,12 @@ impl VoidProcessor {
             _ => {}
         }
 
-        // Spectrum Analysis (On Mono Mix) - uses pre-allocated buffers
+        // Spectrum Analysis (On Mono Mix) - throttled to every 4th frame (~25fps)
+        self.spectrum_frame_counter += 1;
+        if self.spectrum_frame_counter >= 4 {
+            self.spectrum_frame_counter = 0;
+        }
+        if self.spectrum_frame_counter == 0 {
         if let Some(sender) = &self.spectrum_sender {
             // Need Input Mono Mix too
             let mut input_mono = [0.0f32; FRAME_SIZE];
@@ -639,5 +654,6 @@ impl VoidProcessor {
                     sender.try_send((self.spectrum_in_buf.clone(), self.spectrum_out_buf.clone()));
             }
         }
+        } // spectrum throttle
     }
 }
