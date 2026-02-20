@@ -42,7 +42,7 @@ pub fn render_volume_meter(ui: &mut egui::Ui, volume: f32, gate_threshold: f32) 
         }
 
         // Threshold Marker
-        let marker_x = rect.min.x + rect.width() * threshold_pos;
+        let marker_x = rect.width().mul_add(threshold_pos, rect.min.x);
         painter.line_segment(
             [
                 Pos2::new(marker_x, rect.min.y),

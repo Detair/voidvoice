@@ -8,8 +8,6 @@ use std::process::Command;
 #[derive(Debug, Clone)]
 pub struct ConnectedApp {
     pub name: String,
-    #[allow(dead_code)]
-    pub source_output_id: u32,
 }
 
 /// Gets list of applications connected to VoidMic's virtual source.
@@ -52,11 +50,10 @@ fn parse_source_outputs(text: &str) -> Vec<ConnectedApp> {
         // New source output block
         if line.starts_with("Source Output #") {
             // Save previous if valid
-            if let (Some(id), Some(name)) = (current_id.take(), current_name.take()) {
+            if let (Some(_), Some(name)) = (current_id.take(), current_name.take()) {
                 if on_voidmic {
                     apps.push(ConnectedApp {
                         name,
-                        source_output_id: id,
                     });
                 }
             }
@@ -81,11 +78,10 @@ fn parse_source_outputs(text: &str) -> Vec<ConnectedApp> {
     }
 
     // Handle last entry
-    if let (Some(id), Some(name)) = (current_id, current_name) {
+    if let (Some(_), Some(name)) = (current_id, current_name) {
         if on_voidmic {
             apps.push(ConnectedApp {
                 name,
-                source_output_id: id,
             });
         }
     }

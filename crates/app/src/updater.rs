@@ -13,15 +13,12 @@ const GITHUB_API_URL: &str = "https://api.github.com/repos/Detair/voidvoice/rele
 pub struct UpdateInfo {
     pub version: String,
     pub download_url: String,
-    #[allow(dead_code)] // May be used in release notes display
-    pub release_notes: String,
 }
 
 #[derive(Deserialize)]
 struct GitHubRelease {
     tag_name: String,
     html_url: String,
-    body: Option<String>,
 }
 
 /// Checks GitHub for available updates.
@@ -63,7 +60,6 @@ pub fn check_for_updates() -> Result<Option<UpdateInfo>, String> {
         Ok(Some(UpdateInfo {
             version: release.tag_name,
             download_url: release.html_url,
-            release_notes: release.body.unwrap_or_default(),
         }))
     } else {
         Ok(None)
@@ -126,13 +122,7 @@ mod tests {
         let release: GitHubRelease = serde_json::from_str(json).unwrap();
         assert_eq!(release.tag_name, "v1.0.0");
         assert_eq!(release.html_url, "https://example.com");
-        assert_eq!(release.body, Some("Release notes".to_string()));
     }
 
-    #[test]
-    fn test_github_release_without_body() {
-        let json = r#"{"tag_name":"v1.0.0","html_url":"https://example.com"}"#;
-        let release: GitHubRelease = serde_json::from_str(json).unwrap();
-        assert!(release.body.is_none());
-    }
+
 }

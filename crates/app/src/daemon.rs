@@ -47,25 +47,6 @@ pub fn remove_pid_file() -> Result<(), String> {
     Ok(())
 }
 
-/// Checks if the daemon is running by checking if the PID file exists and the process is alive.
-#[allow(dead_code)]
-pub fn is_daemon_running() -> bool {
-    if let Some(pid) = read_pid_file() {
-        // Check if process is still running
-        #[cfg(target_os = "linux")]
-        {
-            std::path::Path::new(&format!("/proc/{}", pid)).exists()
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            // On other platforms, just check if PID file exists
-            // Could use system calls for more accuracy
-            true
-        }
-    } else {
-        false
-    }
-}
 
 /// Stops the running daemon by sending SIGTERM.
 #[cfg(target_os = "linux")]

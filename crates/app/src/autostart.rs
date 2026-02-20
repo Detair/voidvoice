@@ -167,46 +167,7 @@ pub fn disable_autostart() -> Result<(), String> {
     }
 }
 
-/// Checks if autostart is currently enabled.
-#[allow(dead_code)]
-pub fn is_autostart_enabled() -> bool {
-    #[cfg(target_os = "linux")]
-    {
-        if let Ok(autostart_dir) = dirs_autostart_dir() {
-            autostart_dir.join("voidmic.desktop").exists()
-        } else {
-            false
-        }
-    }
 
-    #[cfg(target_os = "windows")]
-    {
-        use std::process::Command;
-
-        Command::new("reg")
-            .args([
-                "query",
-                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
-                "/v",
-                "VoidMic",
-            ])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        dirs::home_dir()
-            .map(|h| h.join("Library/LaunchAgents/com.voidmic.plist").exists())
-            .unwrap_or(false)
-    }
-
-    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-    {
-        false
-    }
-}
 
 #[cfg(target_os = "linux")]
 fn dirs_autostart_dir() -> Result<PathBuf, String> {

@@ -65,7 +65,7 @@ impl NoiseFloorTracker {
             }
             if min_val < f32::MAX {
                 // Smooth transition
-                self.current_floor = self.current_floor * 0.95 + min_val * 0.05;
+                self.current_floor = self.current_floor.mul_add(0.95, min_val * 0.05);
             }
         }
     }
@@ -267,6 +267,7 @@ pub struct VoidProcessor {
 // owned and never aliased. The only cross-thread access is through Arc<Atomic*> fields,
 // which are inherently thread-safe. VoidProcessor must NOT be shared via &reference
 // across threads (it does not implement Sync), only moved (Send).
+#[allow(clippy::non_send_fields_in_send_ty)]
 unsafe impl Send for VoidProcessor {}
 
 impl VoidProcessor {
@@ -448,7 +449,7 @@ impl VoidProcessor {
             if let Some(aec_instance) = self.echo_canceller.get_mut(i) {
                 if let Some(refs) = ref_frames {
                     // Try to match channel, or use channel 0 if fewer refs
-                    if let Some(ref_ch) = refs.get(i).or(refs.first()) {
+                    if let Some(ref_ch) = refs.get(i).or_else(|| refs.first()) {
                         let mut aec_output = [0.0f32; FRAME_SIZE];
                         aec_instance.process_frame(&temp_input, ref_ch, &mut aec_output);
                         temp_input.copy_from_slice(&aec_output);
@@ -463,8 +464,7 @@ impl VoidProcessor {
 
             // C. Blend (Suppression Strength)
             for j in 0..FRAME_SIZE {
-                output_ch[j] = temp_input[j] * (1.0 - suppression_strength)
-                    + output_ch[j] * suppression_strength;
+                output_ch[j] = temp_input[j].mul_add(1.0 - suppression_strength, output_ch[j] * suppression_strength);
 
                 // Accumulate to Mono Mix for Gate/VAD analysis
                 mono_mix[j] += output_ch[j];
@@ -516,7 +516,7 @@ impl VoidProcessor {
                 // Gate decision
                 let effective_threshold = if dynamic_threshold_enabled {
                     self.noise_floor_tracker.update(rms);
-                    let dynamic = self.noise_floor_tracker.floor() * 1.5 + 0.003;
+                    let dynamic = self.noise_floor_tracker.floor().mul_add(1.5, 0.003);
                     dynamic.clamp(0.005, 0.08)
                 } else {
                     gate_threshold
@@ -604,7 +604,7 @@ impl VoidProcessor {
 
                     for i in 0..channels {
                         output_frames[i][j] =
-                            output_frames[i][j] * gain_wet + input_frames[i][j] * gain_dry;
+                            output_frames[i][j].mul_add(gain_wet, input_frames[i][j] * gain_dry);
                     }
                     if t_start < crossfade_len {
                         t_start += 1;
@@ -623,7 +623,7 @@ impl VoidProcessor {
 
                     for i in 0..channels {
                         output_frames[i][j] =
-                            output_frames[i][j] * gain_wet + input_frames[i][j] * gain_dry;
+                            output_frames[i][j].mul_add(gain_wet, input_frames[i][j] * gain_dry);
                     }
 
                     if t_start < crossfade_len {

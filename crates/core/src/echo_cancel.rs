@@ -52,7 +52,6 @@ impl EchoCanceller {
     }
 
     /// Resets the echo canceller state. Returns false if re-initialization fails.
-    #[allow(dead_code)]
     pub fn reset(&mut self) -> bool {
         match VoipAec3::builder(SAMPLE_RATE as usize, 1, 1).build() {
             Ok(aec) => {

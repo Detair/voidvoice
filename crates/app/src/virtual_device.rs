@@ -12,7 +12,6 @@ pub const VIRTUAL_SINK_NAME: &str = "VoidMic_Clean";
 #[derive(Debug, Clone)]
 pub struct VirtualDevice {
     pub module_id: u32,
-    #[allow(dead_code)]
     pub sink_name: String,
 }
 
@@ -144,7 +143,6 @@ fn find_voidmic_module_id() -> Option<u32> {
 }
 
 /// Checks if virtual sink exists.
-#[allow(dead_code)]
 pub fn virtual_sink_exists() -> bool {
     #[cfg(target_os = "linux")]
     {
