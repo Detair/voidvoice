@@ -1,9 +1,7 @@
 use lv2::prelude::*;
-use ringbuf::traits::{Consumer, Observer, Producer};
-use ringbuf::HeapRb;
 use std::sync::atomic::Ordering;
-use voidmic_core::constants::{FRAME_SIZE, SAMPLE_RATE};
-use voidmic_core::VoidProcessor;
+use voidmic_core::constants::SAMPLE_RATE;
+use voidmic_core::{FrameAdapter, VoidProcessor};
 
 #[derive(PortCollection)]
 struct VoidMicPorts {
@@ -19,8 +17,7 @@ struct VoidMicPorts {
 #[uri("https://github.com/Detair/voidvoice/lv2/voidmic")]
 struct VoidMic {
     processor: VoidProcessor,
-    rb_in: HeapRb<f32>,
-    rb_out: HeapRb<f32>,
+    adapter: FrameAdapter,
 }
 
 // Safety: LV2 hosts guarantee that Plugin::run() is called from a single audio thread.
@@ -52,14 +49,9 @@ impl Plugin for VoidMic {
             false,           // Echo Cancel disabled
         );
 
-        let buffer_size = FRAME_SIZE * 4 * 2;
-        let rb_in = HeapRb::<f32>::new(buffer_size);
-        let rb_out = HeapRb::<f32>::new(buffer_size);
-
         Some(Self {
             processor,
-            rb_in,
-            rb_out,
+            adapter: FrameAdapter::new(),
         })
     }
 
@@ -75,56 +67,31 @@ impl Plugin for VoidMic {
         self.processor.process_updates();
 
         // 2. Push Input
-        let input_l = ports.input_l.iter();
-        let input_r = ports.input_r.iter();
+        let input_l: Vec<f32> = ports.input_l.iter().copied().collect();
+        let input_r: Vec<f32> = ports.input_r.iter().copied().collect();
+        self.adapter.push_stereo_interleaved(&input_l, &input_r);
 
-        for (l, r) in input_l.zip(input_r) {
-            let _ = self.rb_in.try_push(*l);
-            let _ = self.rb_in.try_push(*r);
-        }
-
-        // 3. Process Blocks
-        let mut left_in = [0.0f32; FRAME_SIZE];
-        let mut right_in = [0.0f32; FRAME_SIZE];
-        let mut left_out = [0.0f32; FRAME_SIZE];
-        let mut right_out = [0.0f32; FRAME_SIZE];
-
-        while self.rb_in.occupied_len() >= FRAME_SIZE * 2 {
-            for j in 0..FRAME_SIZE {
-                left_in[j] = self.rb_in.try_pop().unwrap_or(0.0);
-                right_in[j] = self.rb_in.try_pop().unwrap_or(0.0);
-            }
-
-            self.processor.process_frame(
-                &[&left_in, &right_in],
-                &mut [&mut left_out, &mut right_out],
-                None,
-                suppression,
-                threshold,
-                false, // Use explicit threshold from control port, not dynamic
-            );
-
-            for j in 0..FRAME_SIZE {
-                let _ = self.rb_out.try_push(left_out[j]);
-                let _ = self.rb_out.try_push(right_out[j]);
-            }
-        }
+        // 3. Process available frames
+        self.adapter.process_available(
+            &mut self.processor,
+            suppression,
+            threshold,
+            false, // Use explicit threshold from control port, not dynamic
+        );
 
         // 4. Fill Output
-        let output_l = ports.output_l.iter_mut();
-        let output_r = ports.output_r.iter_mut();
+        let num_samples = ports.output_l.len();
+        let mut out_l = vec![0.0f32; num_samples];
+        let mut out_r = vec![0.0f32; num_samples];
+        self.adapter.pop_stereo(&mut out_l, &mut out_r);
 
-        for (l, r) in output_l.zip(output_r) {
-            if self.rb_out.occupied_len() >= 2 {
-                *l = self.rb_out.try_pop().unwrap_or(0.0);
-                *r = self.rb_out.try_pop().unwrap_or(0.0);
-            } else {
-                *l = 0.0;
-                *r = 0.0;
-            }
+        for (dst, src) in ports.output_l.iter_mut().zip(out_l.iter()) {
+            *dst = *src;
+        }
+        for (dst, src) in ports.output_r.iter_mut().zip(out_r.iter()) {
+            *dst = *src;
         }
     }
 }
 
 lv2_descriptors!(VoidMic);
-

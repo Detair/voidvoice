@@ -5823,6 +5823,7 @@ dependencies = [
  "crossbeam-channel",
  "log",
  "nnnoiseless",
+ "ringbuf",
  "spectrum-analyzer",
  "webrtc-vad",
 ]
@@ -5833,7 +5834,6 @@ version = "0.9.0"
 dependencies = [
  "log",
  "lv2",
- "ringbuf",
  "voidmic_core",
 ]
 
@@ -5846,7 +5846,6 @@ dependencies = [
  "egui",
  "nih_plug",
  "nih_plug_egui",
- "ringbuf",
  "voidmic_core",
  "voidmic_ui",
 ]
