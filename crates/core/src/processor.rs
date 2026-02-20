@@ -419,8 +419,19 @@ impl VoidProcessor {
         dynamic_threshold_enabled: bool,
     ) {
         let channels = self.channels;
-        assert_eq!(input_frames.len(), channels);
-        assert_eq!(output_frames.len(), channels);
+        if input_frames.len() != channels || output_frames.len() != channels {
+            // Mismatch: output silence rather than crashing the host
+            log::error!(
+                "Channel count mismatch: expected {}, got input={} output={}",
+                channels,
+                input_frames.len(),
+                output_frames.len()
+            );
+            for out_ch in output_frames.iter_mut() {
+                out_ch.fill(0.0);
+            }
+            return;
+        }
 
         let mut mono_mix = [0.0f32; FRAME_SIZE];
 
@@ -692,5 +703,306 @@ impl VoidProcessor {
             }
         }
         } // spectrum throttle
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── NoiseFloorTracker ─────────────────────────────────────────
+
+    #[test]
+    fn test_initial_floor() {
+        let tracker = NoiseFloorTracker::new();
+        assert!((tracker.floor() - 0.01).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_floor_converges_to_minimum() {
+        let mut tracker = NoiseFloorTracker::new();
+        // Feed a constant RMS for many frames
+        for _ in 0..500 {
+            tracker.update(0.05);
+        }
+        // Floor should converge toward 0.05
+        assert!(
+            tracker.floor() > 0.02,
+            "Floor should converge upward: got {}",
+            tracker.floor()
+        );
+    }
+
+    #[test]
+    fn test_floor_ignores_near_zero() {
+        let mut tracker = NoiseFloorTracker::new();
+        // Pre-fill with a known value
+        for _ in 0..100 {
+            tracker.update(0.03);
+        }
+        let floor_before = tracker.floor();
+        // Feed near-zero values (below 0.0001 threshold)
+        for _ in 0..50 {
+            tracker.update(0.00001);
+        }
+        // Floor should not have dropped significantly from the near-zero values
+        assert!(
+            tracker.floor() > floor_before * 0.5,
+            "Floor should not be dragged down by near-zero: got {}",
+            tracker.floor()
+        );
+    }
+
+    #[test]
+    fn test_floor_updates_with_new_minimum() {
+        let mut tracker = NoiseFloorTracker::new();
+        for _ in 0..100 {
+            tracker.update(0.1);
+        }
+        let high_floor = tracker.floor();
+        // Now feed lower values
+        for _ in 0..200 {
+            tracker.update(0.005);
+        }
+        assert!(
+            tracker.floor() < high_floor,
+            "Floor should track downward: {} should be < {}",
+            tracker.floor(),
+            high_floor
+        );
+    }
+
+    #[test]
+    fn test_ring_buffer_wraps() {
+        let mut tracker = NoiseFloorTracker::new();
+        // Feed more than 300 samples (the ring buffer size)
+        for i in 0..600 {
+            tracker.update(0.01 + (i as f32) * 0.0001);
+        }
+        // Should not panic, and floor should be reasonable
+        assert!(tracker.floor() > 0.0);
+    }
+
+    // ── ThreeBandEq ──────────────────────────────────────────────
+
+    #[test]
+    fn test_flat_eq_is_near_identity() {
+        let mut eq = ThreeBandEq::new(0.0, 0.0, 0.0).unwrap();
+        // Process a DC-ish pulse and verify output is close to input
+        // (filters have transient response, so check after warmup)
+        for _ in 0..100 {
+            eq.process(0.5);
+        }
+        let out = eq.process(0.5);
+        assert!(
+            (out - 0.5).abs() < 0.05,
+            "Flat EQ should be near-identity after warmup: got {}",
+            out
+        );
+    }
+
+    #[test]
+    fn test_eq_construction_with_valid_gains() {
+        assert!(ThreeBandEq::new(-6.0, 3.0, 6.0).is_ok());
+        assert!(ThreeBandEq::new(0.0, 0.0, 0.0).is_ok());
+        assert!(ThreeBandEq::new(10.0, -10.0, 10.0).is_ok());
+    }
+
+    #[test]
+    fn test_eq_update_gains() {
+        let mut eq = ThreeBandEq::new(0.0, 0.0, 0.0).unwrap();
+        assert!(eq.update_gains(3.0, -3.0, 6.0).is_ok());
+        assert!(eq.update_gains(-10.0, 0.0, 10.0).is_ok());
+    }
+
+    // ── LookaheadLimiter ─────────────────────────────────────────
+
+    #[test]
+    fn test_quiet_signal_gains_up() {
+        let mut limiter = LookaheadLimiter::new(0.7);
+        let mut data = vec![0.1f32; FRAME_SIZE];
+        let mut frames: Vec<&mut [f32]> = vec![data.as_mut_slice()];
+        // Process several frames to let gain ramp up
+        for _ in 0..50 {
+            limiter.process_frame(&mut frames);
+        }
+        // After many frames, samples should be boosted above 0.1
+        assert!(
+            frames[0][0].abs() > 0.1,
+            "Quiet signal should be boosted: got {}",
+            frames[0][0]
+        );
+    }
+
+    #[test]
+    fn test_loud_signal_gains_down() {
+        let mut limiter = LookaheadLimiter::new(0.3);
+        let mut data = vec![0.9f32; FRAME_SIZE];
+        let mut frames: Vec<&mut [f32]> = vec![data.as_mut_slice()];
+        for _ in 0..50 {
+            limiter.process_frame(&mut frames);
+        }
+        // After many frames, samples should be reduced below 0.9
+        assert!(
+            frames[0][0].abs() < 0.9,
+            "Loud signal should be attenuated: got {}",
+            frames[0][0]
+        );
+    }
+
+    #[test]
+    fn test_output_never_clips() {
+        let mut limiter = LookaheadLimiter::new(0.7);
+        let mut data = vec![0.98f32; FRAME_SIZE];
+        let mut frames: Vec<&mut [f32]> = vec![data.as_mut_slice()];
+        for _ in 0..100 {
+            limiter.process_frame(&mut frames);
+        }
+        for sample in frames[0].iter() {
+            assert!(
+                sample.abs() <= 0.99,
+                "Output must not exceed ±0.99: got {}",
+                sample
+            );
+        }
+    }
+
+    #[test]
+    fn test_empty_frames_no_panic() {
+        let mut limiter = LookaheadLimiter::new(0.7);
+        let mut frames: Vec<&mut [f32]> = vec![];
+        limiter.process_frame(&mut frames); // Should not panic
+    }
+
+    // ── VoidProcessor ────────────────────────────────────────────
+
+    #[test]
+    fn test_processor_creation() {
+        let _p1 = VoidProcessor::new(1, 2, (0.0, 0.0, 0.0), 0.7, false);
+        let _p2 = VoidProcessor::new(2, 0, (-3.0, 0.0, 3.0), 0.5, false);
+    }
+
+    #[test]
+    fn test_silence_produces_silence() {
+        let mut processor = VoidProcessor::new(1, 2, (0.0, 0.0, 0.0), 0.7, false);
+        let input = [0.0f32; FRAME_SIZE];
+        let mut output = [0.0f32; FRAME_SIZE];
+
+        // Process enough frames for the gate to fully close
+        for _ in 0..100 {
+            processor.process_frame(
+                &[&input],
+                &mut [&mut output],
+                None,
+                1.0,
+                0.015,
+                false,
+            );
+        }
+
+        // After many silent frames, output should be all zeros
+        let max = output.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        assert!(max < 0.001, "Silent input should produce silent output: max={}", max);
+    }
+
+    #[test]
+    fn test_bypass_passes_through() {
+        let mut processor = VoidProcessor::new(1, 2, (0.0, 0.0, 0.0), 0.7, false);
+        processor.bypass_enabled.store(true, Ordering::Relaxed);
+        processor.process_updates();
+
+        // Generate a non-zero signal
+        let mut input = [0.0f32; FRAME_SIZE];
+        for (i, s) in input.iter_mut().enumerate() {
+            *s = (i as f32 / FRAME_SIZE as f32) * 0.5;
+        }
+        let mut output = [0.0f32; FRAME_SIZE];
+
+        // Process enough frames for bypass crossfade to complete
+        for _ in 0..20 {
+            processor.process_frame(
+                &[&input],
+                &mut [&mut output],
+                None,
+                1.0,
+                0.015,
+                false,
+            );
+        }
+
+        // After crossfade settles, output should match input
+        for i in 0..FRAME_SIZE {
+            assert!(
+                (output[i] - input[i]).abs() < 0.01,
+                "Bypass should pass through: sample {} expected {} got {}",
+                i,
+                input[i],
+                output[i]
+            );
+        }
+    }
+
+    #[test]
+    fn test_gate_closes_on_silence() {
+        let mut processor = VoidProcessor::new(1, 2, (0.0, 0.0, 0.0), 0.7, false);
+
+        // First, feed loud audio to open the gate
+        let loud = [0.3f32; FRAME_SIZE];
+        let mut output = [0.0f32; FRAME_SIZE];
+        for _ in 0..10 {
+            processor.process_frame(
+                &[&loud],
+                &mut [&mut output],
+                None,
+                1.0,
+                0.015,
+                false,
+            );
+        }
+
+        // Now feed silence - gate should close after release period
+        let silence = [0.0f32; FRAME_SIZE];
+        for _ in 0..200 {
+            processor.process_frame(
+                &[&silence],
+                &mut [&mut output],
+                None,
+                1.0,
+                0.015,
+                false,
+            );
+        }
+
+        let max = output.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        assert!(max < 0.001, "Gate should close after silence: max={}", max);
+    }
+
+    #[test]
+    fn test_channel_mismatch_does_not_panic() {
+        let mut processor = VoidProcessor::new(2, 2, (0.0, 0.0, 0.0), 0.7, false);
+        let input = [0.5f32; FRAME_SIZE];
+        let mut output = [0.5f32; FRAME_SIZE];
+
+        // Pass 1 channel to a 2-channel processor — should not panic
+        processor.process_frame(
+            &[&input],        // 1 channel, expected 2
+            &mut [&mut output],
+            None,
+            1.0,
+            0.015,
+            false,
+        );
+
+        // Output should be zeroed (silence fallback)
+        assert_eq!(output[0], 0.0, "Mismatch should produce silence");
+    }
+
+    #[test]
+    fn test_process_updates_does_not_panic() {
+        let mut processor = VoidProcessor::new(1, 2, (0.0, 0.0, 0.0), 0.7, false);
+        // Call process_updates multiple times with no changes — should be safe
+        for _ in 0..10 {
+            processor.process_updates();
+        }
     }
 }

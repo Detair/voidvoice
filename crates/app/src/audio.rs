@@ -47,6 +47,7 @@ pub struct AudioEngine {
 
 impl AudioEngine {
     /// Starts the audio engine.
+    #[allow(clippy::too_many_arguments)]
     pub fn start(
         input_device_name: &str,
         output_device_name: &str,
