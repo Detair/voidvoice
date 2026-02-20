@@ -24,6 +24,7 @@ echo -e "Detected OS: ${GREEN}$OS ($ID)${NC}"
 # Define Dependencies
 DEBIAN_DEPS="build-essential libasound2-dev libgtk-3-dev libappindicator3-dev libxdo-dev libgl1-mesa-dev libx11-dev"
 FEDORA_DEPS="alsa-lib-devel gtk3-devel libappindicator-gtk3-devel libX11-devel libXtst-devel mesa-libGL-devel gcc"
+ARCH_DEPS="alsa-lib pipewire-pulse gtk3 libappindicator-gtk3 libxdo mesa pkgconf xorg-server-devel"
 
 install_debian() {
     echo -e "${BLUE}Installing dependencies for Debian/Ubuntu...${NC}"
@@ -57,6 +58,11 @@ install_fedora_atomic() {
     fi
 }
 
+install_arch() {
+    echo -e "${BLUE}Installing dependencies for Arch Linux...${NC}"
+    sudo pacman -S --needed $ARCH_DEPS
+}
+
 # Main Logic
 case "$ID" in
     ubuntu|debian|pop|mint)
@@ -70,11 +76,15 @@ case "$ID" in
              install_fedora
         fi
         ;;
+    arch|manjaro|endeavouros)
+        install_arch
+        ;;
     *)
         echo -e "${RED}Unsupported distribution: $ID${NC}"
         echo "Please install the following manually:"
         echo "Debian-based: $DEBIAN_DEPS"
         echo "Fedora-based: $FEDORA_DEPS"
+        echo "Arch-based:   $ARCH_DEPS"
         exit 1
         ;;
 esac

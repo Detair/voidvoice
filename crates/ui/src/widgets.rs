@@ -52,7 +52,7 @@ pub fn render_volume_meter(ui: &mut egui::Ui, volume: f32, gate_threshold: f32) 
         );
 
         // Text overlay
-        let text = format!("{:.1} dB", volume_db);
+        let text = format!("{volume_db:.1} dB");
         painter.text(
             rect.center(),
             egui::Align2::CENTER_CENTER,

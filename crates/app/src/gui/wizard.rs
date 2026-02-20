@@ -1,6 +1,5 @@
 use eframe::egui;
 use std::sync::atomic::Ordering;
-
 use super::app::VoidMicApp;
 
 

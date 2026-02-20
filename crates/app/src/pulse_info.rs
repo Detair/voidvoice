@@ -40,49 +40,32 @@ pub fn get_connected_apps() -> Vec<ConnectedApp> {
 #[cfg(target_os = "linux")]
 fn parse_source_outputs(text: &str) -> Vec<ConnectedApp> {
     let mut apps = Vec::new();
-    let mut current_id: Option<u32> = None;
     let mut current_name: Option<String> = None;
     let mut on_voidmic = false;
 
     for line in text.lines() {
         let line = line.trim();
 
-        // New source output block
         if line.starts_with("Source Output #") {
             // Save previous if valid
-            if let (Some(_), Some(name)) = (current_id.take(), current_name.take()) {
-                if on_voidmic {
-                    apps.push(ConnectedApp {
-                        name,
-                    });
+            if on_voidmic {
+                if let Some(name) = current_name.take() {
+                    apps.push(ConnectedApp { name });
                 }
-            }
-
-            // Parse new ID
-            if let Some(id_str) = line.strip_prefix("Source Output #") {
-                current_id = id_str.parse().ok();
             }
             current_name = None;
             on_voidmic = false;
-        }
-        // Check if connected to VoidMic source
-        else if line.starts_with("Source:") {
+        } else if line.starts_with("Source:") {
             on_voidmic = line.contains("VoidMic_Clean");
-        }
-        // Get application name
-        else if line.starts_with("application.name = ") {
-            current_name = line
-                .strip_prefix("application.name = ")
-                .map(|s| s.trim_matches('"').to_string());
+        } else if let Some(name) = line.strip_prefix("application.name = ") {
+            current_name = Some(name.trim_matches('"').to_string());
         }
     }
 
     // Handle last entry
-    if let (Some(_), Some(name)) = (current_id, current_name) {
-        if on_voidmic {
-            apps.push(ConnectedApp {
-                name,
-            });
+    if on_voidmic {
+        if let Some(name) = current_name {
+            apps.push(ConnectedApp { name });
         }
     }
 

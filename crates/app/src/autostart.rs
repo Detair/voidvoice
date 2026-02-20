@@ -167,8 +167,6 @@ pub fn disable_autostart() -> Result<(), String> {
     }
 }
 
-
-
 #[cfg(target_os = "linux")]
 fn dirs_autostart_dir() -> Result<PathBuf, String> {
     dirs::config_dir()

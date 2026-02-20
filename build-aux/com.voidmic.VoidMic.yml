@@ -27,7 +27,7 @@ modules:
         CARGO_HOME: /run/build/voidmic/cargo
     build-commands:
       - cargo build --release
-      - install -Dm755 target/release/voidmic -t /app/bin/
+      - install -Dm755 target/release/voidmic_app /app/bin/voidmic
     sources:
       - type: dir
         path: .

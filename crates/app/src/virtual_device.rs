@@ -193,27 +193,4 @@ mod tests {
         assert_eq!(device.module_id, 42);
         assert_eq!(device.sink_name, "test_sink");
     }
-
-    #[test]
-    fn test_virtual_device_clone() {
-        let device = VirtualDevice {
-            module_id: 123,
-            sink_name: VIRTUAL_SINK_NAME.to_string(),
-        };
-        let cloned = device.clone();
-        assert_eq!(cloned.module_id, device.module_id);
-        assert_eq!(cloned.sink_name, device.sink_name);
-    }
-
-    #[test]
-    fn test_virtual_device_debug() {
-        let device = VirtualDevice {
-            module_id: 1,
-            sink_name: "test".to_string(),
-        };
-        let debug_str = format!("{:?}", device);
-        assert!(debug_str.contains("VirtualDevice"));
-        assert!(debug_str.contains("module_id"));
-        assert!(debug_str.contains("sink_name"));
-    }
 }

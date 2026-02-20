@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 use cpal::traits::{DeviceTrait, HostTrait};
-use std::path::PathBuf;
+
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -48,10 +48,6 @@ enum Commands {
 
 fn main() -> Result<()> {
     env_logger::init();
-
-    // RNNoise weights are embedded in the nnnoiseless crate
-    let model_path = PathBuf::from("Embedded");
-
     let cli = Cli::parse();
 
     match cli.command {
@@ -62,7 +58,6 @@ fn main() -> Result<()> {
             let _engine = audio::AudioEngine::start(
                 &input,
                 &output,
-                &model_path,
                 0.015,
                 1.0,
                 false,
@@ -184,11 +179,11 @@ fn main() -> Result<()> {
         }
         #[cfg(feature = "gui")]
         Some(Commands::Gui) => {
-            gui::run_gui(model_path).map_err(|e| anyhow!("GUI Error: {}", e))?;
+            gui::run_gui().map_err(|e| anyhow!("GUI Error: {}", e))?;
         }
         #[cfg(feature = "gui")]
         None => {
-            gui::run_gui(model_path).map_err(|e| anyhow!("GUI Error: {}", e))?;
+            gui::run_gui().map_err(|e| anyhow!("GUI Error: {}", e))?;
         }
         #[cfg(not(feature = "gui"))]
         None => {

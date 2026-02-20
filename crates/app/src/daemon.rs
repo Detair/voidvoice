@@ -51,28 +51,18 @@ pub fn remove_pid_file() -> Result<(), String> {
 /// Stops the running daemon by sending SIGTERM.
 #[cfg(target_os = "linux")]
 pub fn stop_daemon() -> Result<(), String> {
-    if let Some(pid) = read_pid_file() {
-        use std::process::Command;
+    let pid = read_pid_file().ok_or("No daemon PID file found")?;
 
-        let result = Command::new("kill")
-            .arg("-TERM")
-            .arg(pid.to_string())
-            .output()
-            .map_err(|e| format!("Failed to send signal: {}", e))?;
+    use std::process::Command;
+    let _ = Command::new("kill")
+        .arg("-TERM")
+        .arg(pid.to_string())
+        .output()
+        .map_err(|e| format!("Failed to send signal: {}", e))?;
 
-        if result.status.success() {
-            // Wait briefly for process to exit
-            std::thread::sleep(std::time::Duration::from_millis(500));
-            remove_pid_file()?;
-            Ok(())
-        } else {
-            // Process may have already exited
-            remove_pid_file()?;
-            Ok(())
-        }
-    } else {
-        Err("No daemon PID file found".to_string())
-    }
+    // Wait briefly for process to exit (ignore kill result — process may have already exited)
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    remove_pid_file()
 }
 
 #[cfg(not(target_os = "linux"))]

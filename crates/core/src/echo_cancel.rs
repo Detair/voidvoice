@@ -1,4 +1,4 @@
-//! Echo cancellation module for VoidMic.
+//! Echo cancellation module for `VoidMic`.
 //!
 //! Uses the aec3 crate (Rust port of WebRTC AEC3) for acoustic echo cancellation.
 
@@ -13,6 +13,7 @@ pub struct EchoCanceller {
 
 impl EchoCanceller {
     /// Creates a new echo canceller. Returns None if AEC3 initialization fails.
+    #[must_use]
     pub fn new() -> Option<Self> {
         let aec = VoipAec3::builder(SAMPLE_RATE as usize, 1, 1)
             .build()
@@ -42,7 +43,7 @@ impl EchoCanceller {
             .aec
             .process(mic_input, Some(speaker_ref), false, &mut self.output_buffer)
         {
-            log::warn!("AEC error: {:?}", e);
+            log::warn!("AEC error: {e:?}");
             output.copy_from_slice(mic_input); // Fallback to raw input
             return false;
         }
@@ -62,5 +63,3 @@ impl EchoCanceller {
         }
     }
 }
-
-

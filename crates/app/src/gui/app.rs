@@ -5,7 +5,6 @@ use crossbeam_channel::Receiver;
 use eframe::egui;
 use global_hotkey::hotkey::HotKey;
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager};
-use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use tray_icon::TrayIcon;
 use voidmic_ui::{theme, visualizer, widgets};
@@ -22,7 +21,7 @@ use super::wizard::WizardStep;
 ///
 /// # Returns
 /// Result indicating success or failure of the GUI application
-pub fn run_gui(model_path: PathBuf) -> eframe::Result<()> {
+pub fn run_gui() -> eframe::Result<()> {
     // Load config early to determine if we should start minimized
     let config = AppConfig::load();
     let start_minimized = config.start_minimized;
@@ -47,7 +46,7 @@ pub fn run_gui(model_path: PathBuf) -> eframe::Result<()> {
         options,
         Box::new(move |cc| {
             theme::setup_custom_style(&cc.egui_ctx, dark_mode);
-            Ok(Box::new(VoidMicApp::new_with_config(model_path, config)))
+            Ok(Box::new(VoidMicApp::new_with_config(config)))
         }),
     )
 }
@@ -59,7 +58,6 @@ pub(super) struct VoidMicApp {
     pub(super) selected_output: String,
     pub(super) engine: Option<AudioEngine>,
     pub(super) status_msg: String,
-    pub(super) model_path: PathBuf,
     pub(super) config: AppConfig,
     pub(super) config_dirty: bool,
     #[allow(dead_code)] // Kept alive for tray icon
@@ -94,7 +92,7 @@ pub(super) struct VoidMicApp {
 }
 
 impl VoidMicApp {
-    pub(super) fn new_with_config(model_path: PathBuf, config: AppConfig) -> Self {
+    pub(super) fn new_with_config(config: AppConfig) -> Self {
         // Tray Setup
         let tray_menu = tray_icon::menu::Menu::new();
         let toggle_item =
@@ -155,7 +153,6 @@ impl VoidMicApp {
             selected_output: default_out,
             engine: None,
             status_msg: "Ready".to_string(),
-            model_path,
             config,
             config_dirty: false,
             tray_icon,

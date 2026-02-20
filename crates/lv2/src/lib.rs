@@ -66,31 +66,30 @@ impl Plugin for VoidMic {
             .store(bypass, Ordering::Relaxed);
         self.processor.process_updates();
 
-        // 2. Push Input
-        let input_l: Vec<f32> = ports.input_l.iter().copied().collect();
-        let input_r: Vec<f32> = ports.input_r.iter().copied().collect();
-        self.adapter.push_stereo_interleaved(&input_l, &input_r);
+        // 2. Push Input (stack-allocated, avoids heap per-callback)
+        let num_samples = ports.input_l.len();
+        let mut input_l = [0.0f32; 8192];
+        let mut input_r = [0.0f32; 8192];
+        let n = num_samples.min(8192);
+        input_l[..n].copy_from_slice(&ports.input_l[..n]);
+        input_r[..n].copy_from_slice(&ports.input_r[..n]);
+        self.adapter.push_stereo_interleaved(&input_l[..n], &input_r[..n]);
 
         // 3. Process available frames
         self.adapter.process_available(
             &mut self.processor,
             suppression,
             threshold,
-            false, // Use explicit threshold from control port, not dynamic
+            false,
         );
 
         // 4. Fill Output
-        let num_samples = ports.output_l.len();
-        let mut out_l = vec![0.0f32; num_samples];
-        let mut out_r = vec![0.0f32; num_samples];
-        self.adapter.pop_stereo(&mut out_l, &mut out_r);
+        let mut out_l = [0.0f32; 8192];
+        let mut out_r = [0.0f32; 8192];
+        self.adapter.pop_stereo(&mut out_l[..n], &mut out_r[..n]);
 
-        for (dst, src) in ports.output_l.iter_mut().zip(out_l.iter()) {
-            *dst = *src;
-        }
-        for (dst, src) in ports.output_r.iter_mut().zip(out_r.iter()) {
-            *dst = *src;
-        }
+        ports.output_l[..n].copy_from_slice(&out_l[..n]);
+        ports.output_r[..n].copy_from_slice(&out_r[..n]);
     }
 }
 

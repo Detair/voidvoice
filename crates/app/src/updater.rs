@@ -123,6 +123,4 @@ mod tests {
         assert_eq!(release.tag_name, "v1.0.0");
         assert_eq!(release.html_url, "https://example.com");
     }
-
-
 }

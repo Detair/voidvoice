@@ -36,18 +36,37 @@ It uses a **Hybrid Engine**:
 - [x] Headless / Daemon mode
 - [x] Flatpak support
 
+## 📺 Wayland & Pipewire Compatibility
+
+VoidMic natively supports modern Linux topologies:
+
+- **PipeWire**: VoidMic creates virtual loopback devices using PulseAudio commands (`pactl`). On Pipewire-based distros, this works flawlessly via the standard `pipewire-pulse` compatibility package.
+- **Wayland**: The UI natively scales and renders securely on Wayland. **Note:** Wayland compositors intentionally block background input monitoring for security reasons. Therefore, the "Global Mute Toggle Hotkey" feature is currently disabled when running on pure Wayland.
+
 ## 📥 Build & Install
 
-### 🐧 Arch Linux / Standard Linux
-```bash
-# Install dependencies (ALSA, PulseAudio/PipeWire)
-sudo pacman -S alsa-lib pulseaudio
+### 🐧 Arch / Debian / Fedora Linux
+VoidMic provides a setup script to automatically install all required development dependencies (ALSA, PipeWire, GTK, X11, etc).
 
-# Build
+```bash
+# 1. Run the setup script for your distro
+chmod +x scripts/setup_dev.sh
+./scripts/setup_dev.sh
+
+# 2. Build
 cargo build --release
 
-# Run
-./target/release/voidmic
+# 3. Run
+./target/release/voidmic_app
+```
+
+#### Arch User Repository (AUR)
+If you prefer not to build the repository manually or wish to install VoidMic as a managed system package, you can build from the provided `PKGBUILD` directly.
+
+```bash
+cd packaging/aur
+updpkgsums
+makepkg -si
 ```
 
 ### 📦 Flatpak
@@ -66,21 +85,21 @@ flatpak run com.voidmic.VoidMic
 For minimal systems:
 ```bash
 cargo build --release --no-default-features
-./target/release/voidmic run -i default
+./target/release/voidmic_app run -i default
 ```
 
 ### 🪟 Windows
 1.  **Install Virtual Audio**: Download [VB-Cable](https://vb-audio.com/Cable/) (free) and reboot.
 2.  Install **Rust** and **BSVC** (C++ Build Tools).
 3.  `cargo build --release`
-4.  Run `.\target\release\voidmic.exe`
+4.  Run `.\target\release\voidmic_app.exe`
 5.  In VoidMic, select "CABLE Input" as Output.
 
 ### 🍎 macOS
 1.  **Install Virtual Audio**: `brew install blackhole-2ch` and reboot.
 2.  Install **Rust** via [rustup.rs](https://rustup.rs).
 3.  `cargo build --release`
-4.  Run `./target/release/voidmic`
+4.  Run `./target/release/voidmic_app`
 5.  In VoidMic, select "BlackHole 2ch" as Output.
 
 ## 🎮 Usage Guide

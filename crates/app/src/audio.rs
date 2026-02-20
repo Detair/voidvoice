@@ -4,7 +4,7 @@ use crossbeam_channel::Sender;
 use log::{info, warn};
 use ringbuf::traits::{Consumer, Observer, Producer, Split};
 use ringbuf::HeapRb;
-use std::path::Path;
+
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -12,6 +12,35 @@ use std::time::Duration;
 use voidmic_core::constants::{FRAME_SIZE, SAMPLE_RATE};
 use voidmic_core::DenoiseState;
 use voidmic_core::VoidProcessor;
+
+fn resolve_device(
+    host: &cpal::Host,
+    name: &str,
+    is_input: bool,
+) -> Result<cpal::Device> {
+    if name == "default" {
+        if is_input {
+            host.default_input_device()
+                .context("No default input found")
+        } else {
+            host.default_output_device()
+                .context("No default output found")
+        }
+    } else {
+        let mut devices = if is_input {
+            host.input_devices()?
+        } else {
+            host.output_devices()?
+        };
+        devices
+            .find(|d| d.name().ok().as_deref() == Some(name))
+            .context(if is_input {
+                "Input device not found"
+            } else {
+                "Output device not found"
+            })
+    }
+}
 
 // Gate timing constants (all in milliseconds)
 
@@ -36,13 +65,11 @@ pub struct AudioEngine {
 
     pub eq_enabled: Arc<AtomicBool>,
     pub agc_enabled: Arc<AtomicBool>,
-    pub _agc_target: Arc<AtomicU32>, // Kept for potential GUI control
     pub bypass_enabled: Arc<AtomicBool>,
     pub jitter_ewma_us: Arc<AtomicU32>,
     pub gate_threshold: Arc<AtomicU32>,
     pub suppression_strength: Arc<AtomicU32>,
     pub dynamic_threshold_enabled: Arc<AtomicBool>,
-    pub _spectrum_sender: Option<Sender<(Vec<f32>, Vec<f32>)>>,
 }
 
 impl AudioEngine {
@@ -51,7 +78,6 @@ impl AudioEngine {
     pub fn start(
         input_device_name: &str,
         output_device_name: &str,
-        _model_path: &Path, // Kept for API compatibility
         gate_threshold: f32,
         suppression_strength: f32,
         echo_cancel_enabled: bool,
@@ -68,27 +94,13 @@ impl AudioEngine {
         let host = cpal::default_host();
         info!("Audio host: {}", host.id().name());
 
-        let input_device = if input_device_name == "default" {
-            host.default_input_device()
-                .context("No default input found")?
-        } else {
-            host.input_devices()?
-                .find(|d| d.name().ok().as_deref() == Some(input_device_name))
-                .context("Input device not found")?
-        };
+        let input_device = resolve_device(&host, input_device_name, true)?;
         info!(
             "Using input device: {}",
             input_device.name().unwrap_or_default()
         );
 
-        let output_device = if output_device_name == "default" {
-            host.default_output_device()
-                .context("No default output found")?
-        } else {
-            host.output_devices()?
-                .find(|d| d.name().ok().as_deref() == Some(output_device_name))
-                .context("Output device not found")?
-        };
+        let output_device = resolve_device(&host, output_device_name, false)?;
         info!(
             "Using output device: {}",
             output_device.name().unwrap_or_default()
@@ -97,19 +109,11 @@ impl AudioEngine {
         // Resolve reference device for echo cancellation
         let reference_device = if echo_cancel_enabled {
             if let Some(ref_name) = reference_device_name {
-                let dev = if ref_name == "default" {
-                    host.default_input_device()
-                } else {
-                    match host.input_devices() {
-                        Ok(mut devs) => devs.find(|d| d.name().ok().as_deref() == Some(ref_name)),
-                        Err(e) => {
-                            warn!("Failed to enumerate input devices for reference: {}", e);
-                            None
-                        }
-                    }
-                };
+                let dev = resolve_device(&host, ref_name, true).ok();
                 if let Some(d) = &dev {
                     info!("Using reference device: {}", d.name().unwrap_or_default());
+                } else {
+                    warn!("Failed to resolve reference device: {}", ref_name);
                 }
                 dev
             } else {
@@ -221,7 +225,6 @@ impl AudioEngine {
         let eq_high_atomic = processor.eq_high_gain.clone();
         let eq_enabled_atomic = processor.eq_enabled.clone();
         let agc_enabled_atomic = processor.agc_enabled.clone();
-        let agc_target_atomic = processor.agc_target.clone();
         let bypass_enabled_atomic = processor.bypass_enabled.clone();
         let jitter_atomic = processor.jitter_ewma_us.clone();
         let gate_threshold_atomic = processor.gate_threshold.clone();
@@ -308,7 +311,7 @@ impl AudioEngine {
                         prod_out.push_slice(&output_frame);
                     }
                 } else {
-                    thread::sleep(Duration::from_micros(200));
+                    thread::sleep(Duration::from_millis(1));
                 }
             }
         }).context("Failed to spawn audio processing thread")?;
@@ -333,12 +336,10 @@ impl AudioEngine {
             eq_high_gain: eq_high_atomic,
             eq_enabled: eq_enabled_atomic,
             agc_enabled: agc_enabled_atomic,
-            _agc_target: agc_target_atomic,
             bypass_enabled: bypass_enabled_atomic,
             gate_threshold: gate_threshold_atomic,
             suppression_strength: suppression_atomic,
             dynamic_threshold_enabled: dynamic_threshold_atomic,
-            _spectrum_sender: spectrum_sender,
             jitter_ewma_us: jitter_atomic,
         })
     }
@@ -372,23 +373,8 @@ impl OutputFilterEngine {
         let host = cpal::default_host();
 
         // Use monitor source as input (captures what apps are playing)
-        let input_device = if source_name == "default" {
-            host.default_input_device()
-                .context("No default input found")?
-        } else {
-            host.input_devices()?
-                .find(|d| d.name().ok().as_deref() == Some(source_name))
-                .context("Source device not found")?
-        };
-
-        let output_device = if sink_name == "default" {
-            host.default_output_device()
-                .context("No default output found")?
-        } else {
-            host.output_devices()?
-                .find(|d| d.name().ok().as_deref() == Some(sink_name))
-                .context("Output device not found")?
-        };
+        let input_device = resolve_device(&host, source_name, true)?;
+        let output_device = resolve_device(&host, sink_name, false)?;
 
         let config = cpal::StreamConfig {
             channels: 1,
@@ -464,7 +450,7 @@ impl OutputFilterEngine {
                         prod_out.push_slice(&output_frame);
                     }
                 } else {
-                    thread::sleep(Duration::from_micros(500));
+                    thread::sleep(Duration::from_millis(2));
                 }
             }
         }).context("Failed to spawn output filter thread")?;

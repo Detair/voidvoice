@@ -1,7 +1,6 @@
 use crate::audio::{AudioEngine, OutputFilterEngine};
 use crate::virtual_device;
 
-
 use super::app::VoidMicApp;
 use super::devices::get_devices;
 
@@ -39,7 +38,6 @@ impl VoidMicApp {
         match AudioEngine::start(
             &self.selected_input,
             &self.selected_output,
-            &self.model_path,
             self.config.gate_threshold,
             self.config.suppression_strength,
             self.config.echo_cancel_enabled,

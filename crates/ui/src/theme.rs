@@ -61,4 +61,3 @@ pub fn setup_custom_style(ctx: &egui::Context, dark_mode: bool) {
         ctx.set_visuals(visuals);
     }
 }
-

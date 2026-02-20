@@ -1,0 +1,36 @@
+# Maintainer: Detair <detair@pmind.de>
+
+pkgname=voidmic
+pkgver=0.9.0
+pkgrel=1
+pkgdesc="Hybrid AI Noise Reduction tool for Linux (RNNoise + Smart Gate + AEC)"
+arch=('x86_64')
+url="https://github.com/Detair/voidvoice"
+license=('MIT')
+depends=('alsa-lib' 'pipewire-pulse' 'gtk3' 'libappindicator-gtk3' 'libxdo' 'mesa')
+makedepends=('cargo' 'pkgconf' 'xorg-server-devel')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/Detair/voidvoice/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP') # Use 'updpkgsums' to generate this before publishing
+
+build() {
+  cd "voidvoice-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo build --frozen --release --bin voidmic_app
+}
+
+package() {
+  cd "voidvoice-$pkgver"
+  
+  # Install the main executable
+  install -Dm755 "target/release/voidmic_app" "$pkgdir/usr/bin/voidmic"
+  
+  # Install the desktop entry for application menus
+  install -Dm644 "assets/voidmic.desktop" "$pkgdir/usr/share/applications/voidmic.desktop"
+  
+  # Install the application icon
+  install -Dm644 "assets/icon_32.png" "$pkgdir/usr/share/icons/hicolor/32x32/apps/voidmic.png"
+  
+  # Install the license
+  install -Dm644 "LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

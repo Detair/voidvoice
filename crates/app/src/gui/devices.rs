@@ -1,7 +1,6 @@
 use crate::virtual_device;
 use cpal::traits::{DeviceTrait, HostTrait};
 use eframe::egui;
-use std::process::Command;
 
 use super::app::VoidMicApp;
 
@@ -123,36 +122,12 @@ pub(super) fn get_devices() -> (Vec<String>, Vec<String>) {
 
 pub(super) fn install_virtual_cable() -> Result<String, String> {
     if cfg!(target_os = "linux") {
-        let check = Command::new("pactl")
-            .args(["list", "short", "sinks"])
-            .output()
-            .map_err(|e| {
-                format!(
-                    "Failed to check sinks: {}. Is PulseAudio/PipeWire installed?",
-                    e
-                )
-            })?;
-
-        let output_str = String::from_utf8_lossy(&check.stdout);
-        if output_str.contains("VoidMic_Clean") {
-            return Ok("Virtual sink 'VoidMic_Clean' already exists.".to_string());
-        }
-
-        let result = Command::new("pactl")
-            .args([
-                "load-module",
-                "module-null-sink",
-                "sink_name=VoidMic_Clean",
-                "sink_properties=device.description=VoidMic_Clean",
-            ])
-            .output()
-            .map_err(|e| format!("Failed to create sink: {}", e))?;
-
-        if result.status.success() {
-            Ok("Virtual sink 'VoidMic_Clean' created! Select 'Monitor of VoidMic_Clean' in your apps.".to_string())
-        } else {
-            let stderr = String::from_utf8_lossy(&result.stderr);
-            Err(format!("pactl failed: {}", stderr))
+        match virtual_device::create_virtual_sink() {
+            Ok(_) => Ok(
+                "Virtual sink 'VoidMic_Clean' created! Select 'Monitor of VoidMic_Clean' in your apps."
+                    .to_string(),
+            ),
+            Err(e) => Err(e),
         }
     } else if cfg!(target_os = "windows") {
         open::that("https://vb-audio.com/Cable/")

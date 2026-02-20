@@ -29,6 +29,7 @@ impl Default for FrameAdapter {
 
 impl FrameAdapter {
     /// Creates a new adapter with ring buffers sized for the given channel count.
+    #[must_use]
     pub fn new() -> Self {
         let buffer_size = FRAME_SIZE * 4 * 2; // Always stereo
         Self {
